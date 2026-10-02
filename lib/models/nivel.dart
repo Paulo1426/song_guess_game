@@ -26,7 +26,7 @@ class Nivel {
   final String cancionId;
   final String cancionTitulo;
   final List<Instrumento> instrumentos;
-  final TipoInstrumento instrumentoMelodia;
+  final TipoInstrumento? instrumentoMelodia;
   final List<int> puntosInicio;
 
   Nivel({
@@ -36,7 +36,7 @@ class Nivel {
     required this.cancionId,
     required this.cancionTitulo,
     required List<Instrumento> instrumentos,
-    required this.instrumentoMelodia,
+    this.instrumentoMelodia,
     this.puntosInicio = const [],
   }) : instrumentos = List.unmodifiable(instrumentos) {
     _validar();
@@ -89,7 +89,8 @@ class Nivel {
         presupuestoTotal) {
       throw ArgumentError('Los precios deben sumar exactamente 2.000.000');
     }
-    if (!instrumentos.any((item) => item.tipo == instrumentoMelodia)) {
+    if (instrumentoMelodia != null &&
+        !instrumentos.any((item) => item.tipo == instrumentoMelodia)) {
       throw ArgumentError('El instrumento melódico debe pertenecer al nivel');
     }
   }
@@ -105,9 +106,11 @@ class Nivel {
       instrumentos: rawInstrumentos
           .map((item) => Instrumento.fromJson(item as Map<String, dynamic>))
           .toList(),
-      instrumentoMelodia: TipoInstrumentoExtension.fromId(
-        json['instrumento_melodia'] as String,
-      ),
+      instrumentoMelodia: json['instrumento_melodia'] == null
+          ? null
+          : TipoInstrumentoExtension.fromId(
+              json['instrumento_melodia'] as String,
+            ),
       puntosInicio: (json['puntos_inicio'] as List<dynamic>? ?? [])
           .map((item) => (item as num).toInt())
           .toList(),
@@ -115,13 +118,14 @@ class Nivel {
   }
 
   Map<String, dynamic> toJson() => {
-        'id': id,
-        'numero': numero,
-        'dificultad': dificultad.id,
-        'cancion_id': cancionId,
-        'cancion_titulo': cancionTitulo,
-        'instrumentos': instrumentos.map((item) => item.toJson()).toList(),
-        'instrumento_melodia': instrumentoMelodia.id,
-        'puntos_inicio': puntosInicio,
-      };
+    'id': id,
+    'numero': numero,
+    'dificultad': dificultad.id,
+    'cancion_id': cancionId,
+    'cancion_titulo': cancionTitulo,
+    'instrumentos': instrumentos.map((item) => item.toJson()).toList(),
+    if (instrumentoMelodia != null)
+      'instrumento_melodia': instrumentoMelodia!.id,
+    'puntos_inicio': puntosInicio,
+  };
 }

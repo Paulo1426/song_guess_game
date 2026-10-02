@@ -3,12 +3,16 @@ import '../models/nivel.dart';
 import '../models/partida.dart';
 import '../models/usuario.dart';
 import '../services/audio_service.dart';
+import '../services/firebase_game_repository.dart';
 import '../services/game_service.dart';
 import '../services/nivel_repository.dart';
 import '../services/validation_service.dart';
 
 final gameServiceProvider = Provider((ref) => GameService());
 final audioServiceProvider = Provider((ref) => AudioService());
+final firebaseGameRepositoryProvider = Provider(
+  (ref) => FirebaseGameRepository(),
+);
 
 final nivelRepositoryProvider = Provider<NivelRepository>(
   (ref) => SupabaseNivelRepositoryAdapter(),
@@ -17,7 +21,8 @@ final nivelRepositoryProvider = Provider<NivelRepository>(
 final validationServiceProvider = Provider<ValidationService>(
   (ref) => LocalValidationService(
     (nivelId) async =>
-        (await ref.read(nivelRepositoryProvider).obtener(nivelId)).cancionTitulo,
+        (await ref.read(nivelRepositoryProvider).obtener(nivelId))
+            .cancionTitulo,
   ),
 );
 
@@ -27,8 +32,9 @@ final nivelesProvider = FutureProvider.family<List<Nivel>, Dificultad>(
   (ref, d) => ref.watch(nivelRepositoryProvider).nivelesDe(d),
 );
 
-final partidaProvider =
-    StateNotifierProvider<PartidaNotifier, Partida?>((ref) => PartidaNotifier());
+final partidaProvider = StateNotifierProvider<PartidaNotifier, Partida?>(
+  (ref) => PartidaNotifier(),
+);
 
 class PartidaNotifier extends StateNotifier<Partida?> {
   PartidaNotifier() : super(null);

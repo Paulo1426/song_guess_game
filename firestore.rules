@@ -2,12 +2,8 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
-    function signedIn() {
-      return request.auth != null;
-    }
-
     function isOwner(uid) {
-      return signedIn() && request.auth.uid == uid;
+      return request.auth != null && request.auth.uid == uid;
     }
 
     match /users/{uid} {
@@ -19,31 +15,31 @@ service cloud.firestore {
         allow read: if isOwner(uid);
         allow write: if false;
       }
+
+      match /difficultyOrders/{difficulty} {
+        allow read, write: if false;
+      }
     }
 
     match /songs/{songId} {
-      allow read: if signedIn() && resource.data.published == true;
-      allow write: if false;
+      allow read, write: if false;
     }
 
     match /levels/{levelId} {
-      allow read: if signedIn() && resource.data.published == true;
-      allow write: if false;
+      allow read, write: if false;
 
       match /fragments/{fragmentId} {
-        allow read: if signedIn()
-          && get(/databases/$(database)/documents/levels/$(levelId))
-            .data.published == true;
-        allow write: if false;
+        allow read, write: if false;
       }
     }
 
     match /games/{gameId} {
-      allow get, list: if signedIn() && resource.data.uid == request.auth.uid;
+      allow get, list: if request.auth != null
+        && resource.data.uid == request.auth.uid;
       allow create, update, delete: if false;
 
       match /purchases/{instrumentId} {
-        allow read: if signedIn()
+        allow read: if request.auth != null
           && get(/databases/$(database)/documents/games/$(gameId))
             .data.uid == request.auth.uid;
         allow write: if false;

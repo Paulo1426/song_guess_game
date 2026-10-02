@@ -6,17 +6,22 @@ Este repositorio corresponde a una aplicación móvil desarrollada en Flutter pa
 El proyecto combina:
 - Frontend en Flutter/Dart
 - Estado reactivo con Riverpod
-- Backend y autenticación con Supabase
+- Firebase Authentication para inicio de sesión
+- Cloud Firestore para catálogo y progreso
+- Supabase Edge Functions para reglas de juego y autorización
+- Supabase Storage para stems y canciones
 - Reproducción de audio con just_audio y audio_session
-- Persistencia de usuarios, niveles, progresos e insignias a través de Supabase
 
 ## Stack tecnológico
 - Flutter SDK / Dart 3.12+
 - flutter_riverpod para manejo de estado
-- supabase_flutter para autenticación, base de datos y almacenamiento
+- firebase_core y firebase_auth para Firebase
+- cloud_firestore para acceso futuro del cliente; el flujo actual consulta Firestore mediante Edge Functions
+- supabase_flutter para almacenamiento/audio y servicios de Supabase existentes
+- http para llamadas autenticadas a Edge Functions
 - just_audio para reproducción de audio
 - audio_session para gestión del audio del sistema
-- SQLite no se usa en la app; la lógica de datos principal está en Supabase
+- SQLite no se usa; el progreso actual se conserva en Firestore
 
 ## Estructura del proyecto
 
@@ -35,26 +40,31 @@ El proyecto combina:
 ## Punto de entrada de la aplicación
 El arranque está en `lib/main.dart`.
 
-- Se inicializa Flutter
-- Lee las variables de entorno `SUPABASE_URL` y `SUPABASE_ANON_KEY`
-- Si existen, se inicializa Supabase con `SupabaseService.initialize(...)`
+- Se inicializa Flutter y Firebase para Android, iOS y Web
+- Lee `SUPABASE_URL` y `SUPABASE_ANON_KEY` para usar los servicios de Supabase
+- Si ambas variables existen, inicializa el cliente de Supabase
 - La app se ejecuta con `ProviderScope` para permitir Riverpod
 - La vista principal es `HomeScreen`
 
-## Configuración crítica de Supabase
-La app no debe guardar secretos del backend en el repositorio. La documentación del proyecto recomienda lanzar Flutter con valores por `dart-define`:
+## Configuración y secretos
+La app requiere configuraciones públicas de Firebase generadas en
+`lib/firebase_options.dart` y variables de Supabase para invocar las Edge
+Functions. Ejecuta Flutter con valores por `dart-define`:
 
 ```powershell
 flutter run --dart-define=SUPABASE_URL=https://TU_PROYECTO.supabase.co --dart-define=SUPABASE_ANON_KEY=TU_CLAVE_PUBLICA
 ```
 
 Importante:
-- `SUPABASE_URL` es la URL del proyecto
+- `SUPABASE_URL` es la URL del proyecto Supabase
 - `SUPABASE_ANON_KEY` es la clave pública (anon/publishable)
-- Nunca se debe usar `service_role` desde Flutter
+- La cuenta de servicio Firebase y la clave `service_role` solo viven como
+  secretos del backend; nunca se incluyen en Flutter
 
 ## Modelo de dominio y persistencia
-El proyecto está pensado alrededor de una lógica de juego musical con datos centralizados en Supabase.
+El proyecto combina servicios según su función. Firebase Authentication
+identifica al jugador; Firestore conserva canciones, niveles, orden personal,
+partidas y progreso. Supabase Storage guarda los archivos de audio.
 
 ### Entidades principales
 - `Usuario`: perfil del jugador, progreso y logros
@@ -64,20 +74,20 @@ El proyecto está pensado alrededor de una lógica de juego musical con datos ce
 
 ### Repositorios
 El README identifica varios servicios clave:
-- `SupabaseNivelRepository`: consulta niveles y construye URLs públicas de Storage
-- `UsuarioRepository`: lee y actualiza perfiles, progreso e insignias
+- `FirebaseGameRepository`: llama al backend de progreso con el ID token de Firebase
+- `SupabaseNivelRepository`: adaptador/repositorio heredado del catálogo de Supabase
+- `UsuarioRepository`: repositorio heredado de perfiles/progreso en Supabase
 - `AudioStorageService`: sube archivos de audio a Supabase Storage
 - `AudioService`: prepara los reproductores por instrumento para una partida
-- `SupabaseService`: gestión del cliente y autenticación general
+- `SupabaseService`: cliente y autenticación heredados de Supabase
 
 ## Flujo funcional principal
-1. El usuario inicia sesión o se registra.
-2. La base de datos genera automáticamente un perfil y progreso cuando Supabase Auth registra al usuario.
-3. La app obtiene niveles y canciones desde Supabase.
-4. Para cada nivel, se selecciona un tipo melódico y un punto de inicio.
-5. Se cargan y reproducen stems de audio por instrumento.
-6. El sistema intenta sincronizar todos los audios desde el mismo punto inicial.
-7. El usuario interactúa con la partida y el sistema actualiza progreso, puntos y logros.
+1. El usuario inicia sesión o se registra con Firebase Authentication.
+2. La app llama `game-progress` con un ID token de Firebase.
+3. La Edge Function asigna y persiste para ese usuario el orden aleatorio de la dificultad activa.
+4. El usuario completa todos los niveles de Fácil para desbloquear Media, y todos los de Media para desbloquear Avanzada.
+5. El backend crea partidas, valida la respuesta contra documentos privados y guarda el progreso en Firestore.
+6. Los audios se almacenan en Supabase Storage; la futura conexión de reproducción debe obtener enlaces temporales autorizados.
 
 ## Audio y stems
 La app no separa canciones en tiempo real. Los stems deben prepararse previamente en una herramienta administrativa y luego subirse a Supabase Storage.
@@ -91,11 +101,11 @@ Se espera una estructura similar a:
 Reglas relevantes del README:
 - Cada stem debe arrancar al mismo instante
 - El punto inicial de reproducción debe ser único para toda la partida
-- El tipo melódico se elige al crear el nivel
+- La respuesta melódica debe permanecer en la colección privada de respuestas
 - No se modifica la canción original; se usa el stem correspondiente por nivel
 
-## Base de datos y SQL
-El archivo `supabase/schema.sql` define la base de datos del proyecto, incluyendo:
+## Datos y base de datos
+Los archivos SQL de `supabase/` describen el modelo heredado de Supabase:
 - usuarios
 - perfiles
 - canciones
@@ -105,7 +115,10 @@ El archivo `supabase/schema.sql` define la base de datos del proyecto, incluyend
 - insignias
 - estructuras para la lógica de juego
 
-Además existe `supabase/migration_juego.sql`, que parece complementar la migración principal del juego.
+`supabase/migration_juego.sql` añade fragmentos, partidas y compras al esquema
+heredado. El nuevo modelo de Firestore y sus campos están definidos en
+`FIREBASE_SETUP.md`. Las respuestas no deben guardarse en documentos legibles
+por el cliente.
 
 ## Archivos clave para entender el proyecto
 - `README.md`: documentación principal
@@ -114,6 +127,10 @@ Además existe `supabase/migration_juego.sql`, que parece complementar la migrac
 - `lib/screens/home_screen.dart`: pantalla principal
 - `lib/screens/game_screen.dart`: experiencia de juego
 - `lib/services/supabase_service.dart`: cliente de Supabase
+- `lib/services/firebase_game_repository.dart`: llamadas de progreso desde Flutter
+- `supabase/functions/game-progress/index.ts`: orden, inicio de nivel y validación de respuesta
+- `supabase/functions/audio-link/index.ts`: enlaces temporales de Storage (pendiente de despliegue)
+- `FIREBASE_SETUP.md`: esquema, configuración y despliegue
 - `lib/services/audio_service.dart`: reproducción modular de audio
 - `lib/services/game_service.dart`: lógica del juego
 - `lib/services/usuario_repository.dart`: repositorio de usuario
@@ -121,18 +138,24 @@ Además existe `supabase/migration_juego.sql`, que parece complementar la migrac
 - `lib/models/*.dart`: modelos del dominio
 
 ## Estado del trabajo actual
-Este repositorio está orientado a un proyecto de app móvil en desarrollo con una arquitectura clara en capas:
+La app móvil se encuentra en transición de backend. El inicio de sesión y el
+flujo básico de progreso usan Firebase y Supabase Edge Functions; aún quedan por
+conectar la compra de instrumentos y la reproducción protegida de audios.
+La arquitectura mantiene:
 - UI en Flutter
 - Providers para la lógica reactiva
-- Servicios para acceso a Supabase y audio
+- Servicios para acceso a Firebase, Supabase y audio
 - Modelos de dominio con reglas del juego
 - SQL para almacenamiento y datos del juego
 
-El contexto principal es que la app es una experiencia musical interactiva con autenticación, niveles, progresos y reproducción sincronizada de múltiples pistas de audio.
+El contexto principal es una experiencia musical con niveles, orden aleatorio
+personal y desbloqueo secuencial de dificultades.
 
 ## Observaciones útiles para continuar el trabajo
-- La clave pública de Supabase puede ir en la app, pero no la `service_role`
+- Las claves públicas de Firebase/Supabase pueden estar en el cliente; nunca
+  incluyas la cuenta de servicio ni `service_role`
 - Los archivos de audio deben prepararse fuera de la app y publicarse en Storage
 - La lógica de reproducción debe ser coherente y sincronizada en todos los stems
 - El desarrollo de nuevas funcionalidades debe mantener la separación entre UI, repositorios y servicios
-- Cuando se revisen cambios, conviene tener en cuenta que la aplicación es en Flutter y que usa Supabase como backend principal
+- El backend de progresión valida el avance; no confíes en el estado local de
+  la interfaz como autorización

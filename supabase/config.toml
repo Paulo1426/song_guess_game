@@ -1,0 +1,5 @@
+[functions.audio-link]
+verify_jwt = false
+
+[functions.game-progress]
+verify_jwt = false
