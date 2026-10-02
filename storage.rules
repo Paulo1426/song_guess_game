@@ -1,0 +1,9 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+    // La app obtendra URLs temporales desde Cloud Functions tras validar
+    // compras, descubrimiento de la melodia o victoria de la partida.
+    allow read, write: if false;
+  }
+}

@@ -1,0 +1,48 @@
+{
+  "project_info": {
+    "project_number": "655179331422",
+    "project_id": "song-gues-game",
+    "storage_bucket": "song-gues-game.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:655179331422:android:9a1c5a526b860f59c881cf",
+        "android_client_info": {
+          "package_name": "com.example.song_guess_game"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBOGxAWc4HqS81llCv39WGrE1Rhy8bkheo"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:655179331422:android:f9aca55b0c6a8fcac881cf",
+        "android_client_info": {
+          "package_name": "com.marin.song_guess_game"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBOGxAWc4HqS81llCv39WGrE1Rhy8bkheo"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
