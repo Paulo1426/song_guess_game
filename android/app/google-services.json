@@ -1,6 +1,7 @@
 {
   "project_info": {
     "project_number": "655179331422",
+    "firebase_url": "https://song-gues-game-default-rtdb.firebaseio.com",
     "project_id": "song-gues-game",
     "storage_bucket": "song-gues-game.firebasestorage.app"
   },
@@ -12,7 +13,12 @@
           "package_name": "com.example.song_guess_game"
         }
       },
-      "oauth_client": [],
+      "oauth_client": [
+        {
+          "client_id": "655179331422-8turslccahe27035sehn4d1mjc6cg642.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
       "api_key": [
         {
           "current_key": "AIzaSyBOGxAWc4HqS81llCv39WGrE1Rhy8bkheo"
@@ -20,7 +26,19 @@
       ],
       "services": {
         "appinvite_service": {
-          "other_platform_oauth_client": []
+          "other_platform_oauth_client": [
+            {
+              "client_id": "655179331422-8turslccahe27035sehn4d1mjc6cg642.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "655179331422-avpse2vcn50b12h13cqorn8u7a5bmp28.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.example.songGuessGame"
+              }
+            }
+          ]
         }
       }
     },
@@ -31,7 +49,12 @@
           "package_name": "com.marin.song_guess_game"
         }
       },
-      "oauth_client": [],
+      "oauth_client": [
+        {
+          "client_id": "655179331422-8turslccahe27035sehn4d1mjc6cg642.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
       "api_key": [
         {
           "current_key": "AIzaSyBOGxAWc4HqS81llCv39WGrE1Rhy8bkheo"
@@ -39,7 +62,19 @@
       ],
       "services": {
         "appinvite_service": {
-          "other_platform_oauth_client": []
+          "other_platform_oauth_client": [
+            {
+              "client_id": "655179331422-8turslccahe27035sehn4d1mjc6cg642.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "655179331422-avpse2vcn50b12h13cqorn8u7a5bmp28.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.example.songGuessGame"
+              }
+            }
+          ]
         }
       }
     }

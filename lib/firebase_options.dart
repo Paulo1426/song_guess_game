@@ -61,15 +61,17 @@ class DefaultFirebaseOptions {
     appId: '1:655179331422:android:9a1c5a526b860f59c881cf',
     messagingSenderId: '655179331422',
     projectId: 'song-gues-game',
+    databaseURL: 'https://song-gues-game-default-rtdb.firebaseio.com',
     storageBucket: 'song-gues-game.firebasestorage.app',
   );
-
   static const FirebaseOptions ios = FirebaseOptions(
     apiKey: 'AIzaSyAvPN-vTptUZGVaGoLw_RX9105mYCrQW1o',
     appId: '1:655179331422:ios:e3d8a554d08e487cc881cf',
     messagingSenderId: '655179331422',
     projectId: 'song-gues-game',
+    databaseURL: 'https://song-gues-game-default-rtdb.firebaseio.com',
     storageBucket: 'song-gues-game.firebasestorage.app',
+    iosClientId: '655179331422-avpse2vcn50b12h13cqorn8u7a5bmp28.apps.googleusercontent.com',
     iosBundleId: 'com.example.songGuessGame',
   );
 }
