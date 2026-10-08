@@ -120,16 +120,46 @@ class Nivel {
   }
 
   factory Nivel.fromJson(Map<String, dynamic> json) {
-    final rawInstrumentos = json['instrumentos'] as List<dynamic>;
+    final rawInstrumentos = json['instrumentos'];
+    final instrumentos = <Instrumento>[];
+
+    if (rawInstrumentos is List) {
+      for (final item in rawInstrumentos) {
+        final rawItem = item as Map<String, dynamic>;
+        instrumentos.add(
+          Instrumento.fromJson(rawItem).copyWith(precio: 0, comprable: true),
+        );
+      }
+    } else if (rawInstrumentos is Map) {
+      for (final entry in rawInstrumentos.entries) {
+        final tipo = entry.key.toString();
+        final value = entry.value;
+        final mapValue = value is Map
+            ? value as Map<String, dynamic>
+            : <String, dynamic>{};
+        instrumentos.add(
+          Instrumento(
+            tipo: TipoInstrumentoExtension.fromId(tipo),
+            precio: 0,
+            audioUrl:
+                (mapValue['storagePath'] ??
+                        mapValue['audioUrl'] ??
+                        mapValue['audio_url'] ??
+                        '')
+                    .toString(),
+            comprable: true,
+          ),
+        );
+      }
+    }
+
     return Nivel(
       id: json['id'] as String,
       numero: (json['numero'] as num).toInt(),
       dificultad: DificultadExtension.fromId(json['dificultad'] as String),
       cancionId: json['cancion_id'] as String,
       cancionTitulo: json['cancion_titulo'] as String,
-      instrumentos: rawInstrumentos
-          .map((item) => Instrumento.fromJson(item as Map<String, dynamic>))
-          .toList(),
+      instrumentos: instrumentos,
       instrumentoMelodia: json['instrumento_melodia'] == null
           ? null
           : TipoInstrumentoExtension.fromId(

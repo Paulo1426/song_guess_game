@@ -99,7 +99,7 @@ class _AuthenticatedHomeState extends ConsumerState<_AuthenticatedHome> {
     }
   }
 
-  Future<void> _iniciar(Nivel nivel) async {
+  Future<void> _iniciar(Nivel nivel, {int? numeroVisible}) async {
     setState(() => _startingLevelId = nivel.id);
     try {
       final repository = ref.read(firebaseGameRepositoryProvider);
@@ -107,8 +107,11 @@ class _AuthenticatedHomeState extends ConsumerState<_AuthenticatedHome> {
       if (!mounted) return;
       final completada = await Navigator.of(context).push<bool>(
         MaterialPageRoute(
-          builder: (_) =>
-              GameScreen(nivel: partida.nivel, gameId: partida.gameId),
+          builder: (_) => GameScreen(
+            nivel: partida.nivel,
+            gameId: partida.gameId,
+            numeroVisible: numeroVisible,
+          ),
         ),
       );
       if (completada == true) await _cargar();
@@ -184,7 +187,7 @@ class _ContenidoProgreso extends StatelessWidget {
   final EstadoJuegoRemoto estado;
   final bool esInvitado;
   final String? startingLevelId;
-  final ValueChanged<Nivel> onStart;
+  final void Function(Nivel nivel, {int? numeroVisible}) onStart;
   final Future<void> Function() onRefresh;
   bool get _starting => startingLevelId != null;
 
@@ -246,19 +249,24 @@ class _ContenidoProgreso extends StatelessWidget {
                 textAlign: TextAlign.center,
               ),
             ),
-          for (final asignado in estado.niveles)
+          for (final entry in estado.niveles.asMap().entries)
             Card(
               child: ListTile(
-                title: Text('Nivel ${asignado.nivel.numero}'),
+                title: Text('Nivel ${entry.key + 1}'),
                 subtitle: Text(
-                  asignado.completado ? 'Completado' : 'Canción por descubrir',
+                  entry.value.completado
+                      ? 'Completado'
+                      : 'Canción por descubrir',
                 ),
-                trailing: asignado.completado
+                trailing: entry.value.completado
                     ? FilledButton.tonal(
                         onPressed: _starting
                             ? null
-                            : () => onStart(asignado.nivel),
-                        child: startingLevelId == asignado.nivel.id
+                            : () => onStart(
+                                entry.value.nivel,
+                                numeroVisible: entry.key + 1,
+                              ),
+                        child: startingLevelId == entry.value.nivel.id
                             ? const SizedBox(
                                 width: 18,
                                 height: 18,
@@ -268,12 +276,15 @@ class _ContenidoProgreso extends StatelessWidget {
                               )
                             : const Text('Repetir'),
                       )
-                    : asignado.puedeIniciar
+                    : entry.value.puedeIniciar
                     ? FilledButton(
                         onPressed: startingLevelId == null
-                            ? () => onStart(asignado.nivel)
+                            ? () => onStart(
+                                entry.value.nivel,
+                                numeroVisible: entry.key + 1,
+                              )
                             : null,
-                        child: startingLevelId == asignado.nivel.id
+                        child: startingLevelId == entry.value.nivel.id
                             ? const SizedBox(
                                 width: 18,
                                 height: 18,

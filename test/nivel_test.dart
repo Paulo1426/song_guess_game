@@ -111,6 +111,37 @@ void main() {
     );
   });
 
+  test('normaliza niveles antiguos con precios asignados al parsearlos', () {
+    final nivel = Nivel.fromJson({
+      'id': 'facil-02',
+      'numero': 2,
+      'dificultad': 'facil',
+      'cancion_id': 'cancion-002',
+      'cancion_titulo': 'Canción misteriosa',
+      'instrumentos': [
+        {
+          'tipo': 'bateria',
+          'precio': 400000,
+          'audio_url': 'cancion-002/track.mp3',
+        },
+        {
+          'tipo': 'acordeon',
+          'precio': 300000,
+          'audio_url': 'cancion-002/track.mp3',
+        },
+        {
+          'tipo': 'bajo',
+          'precio': 300000,
+          'audio_url': 'cancion-002/track.mp3',
+        },
+        {'tipo': 'guitarra', 'precio': 0, 'audio_url': 'cancion-002/track.mp3'},
+      ],
+    });
+
+    expect(nivel.instrumentos.every((item) => item.precio == 0), isTrue);
+    expect(nivel.instrumentos.every((item) => item.comprable), isTrue);
+  });
+
   test('genera cuatro instrumentos disponibles sin asignar precios', () {
     final nivel = Nivel.generar(
       id: 'facil-02',

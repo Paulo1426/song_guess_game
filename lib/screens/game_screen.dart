@@ -11,8 +11,14 @@ import '../services/audio_service.dart';
 class GameScreen extends ConsumerStatefulWidget {
   final Nivel nivel;
   final String gameId;
+  final int? numeroVisible;
 
-  const GameScreen({super.key, required this.nivel, required this.gameId});
+  const GameScreen({
+    super.key,
+    required this.nivel,
+    required this.gameId,
+    this.numeroVisible,
+  });
 
   @override
   ConsumerState<GameScreen> createState() => _GameScreenState();
@@ -123,20 +129,6 @@ class _GameScreenState extends ConsumerState<GameScreen> {
         );
       }
     }
-  }
-
-  String _nextPriceDescription() {
-    if (_purchased.length >= 2) {
-      return 'Precio de esta compra: \$${_formatPrice(_balance)}';
-    }
-    final purchasedPrices = _revealedPrices.values;
-    if (purchasedPrices.length == 1 && purchasedPrices.first == 400000) {
-      return 'Precio de esta compra: \$300.000';
-    }
-    if (purchasedPrices.length == 1) {
-      return 'Precio aleatorio: \$300.000 o \$400.000';
-    }
-    return 'Al comprar se asignará \$300.000 o \$400.000';
   }
 
   Future<void> _playStems(List<Instrumento> instruments) async {
@@ -256,7 +248,7 @@ class _GameScreenState extends ConsumerState<GameScreen> {
   @override
   Widget build(BuildContext context) => Scaffold(
     appBar: AppBar(
-      title: Text('Nivel ${widget.nivel.numero}'),
+      title: Text('Nivel ${widget.numeroVisible ?? widget.nivel.numero}'),
       actions: [
         if (_playing)
           IconButton(
@@ -291,15 +283,6 @@ class _GameScreenState extends ConsumerState<GameScreen> {
           ListTile(
             leading: const Icon(Icons.music_note),
             title: Text(instrumento.nombre),
-            subtitle: _purchased.contains(instrumento.id)
-                ? Text(
-                    'Comprado · \$${_formatPrice(_revealedPrices[instrumento.id]!)}',
-                  )
-                : _melodyFound
-                ? const Text('Desbloqueado')
-                : _purchased.length >= 3
-                ? const Text('No comprado · presupuesto agotado')
-                : Text(_nextPriceDescription()),
             trailing: IconButton(
               onPressed:
                   _buying ||
@@ -390,9 +373,4 @@ class _GameScreenState extends ConsumerState<GameScreen> {
       ],
     ),
   );
-}
-
-String _formatPrice(int price) {
-  final thousands = price ~/ 1000;
-  return '${thousands.toString()}.000';
 }

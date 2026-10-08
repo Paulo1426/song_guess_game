@@ -41,10 +41,16 @@ class Instrumento {
   String get nombre => tipo.nombre;
 
   factory Instrumento.fromJson(Map<String, dynamic> json) {
+    final rawTipo = json['tipo'] ?? json['instrumento'];
+    if (rawTipo == null) {
+      throw const FormatException('Falta el tipo del instrumento');
+    }
+    final rawPrecio = json['precio'];
+    final rawAudioUrl = json['audio_url'] ?? json['audioUrl'] ?? '';
     return Instrumento(
-      tipo: TipoInstrumentoExtension.fromId(json['tipo'] as String),
-      precio: (json['precio'] as num).toInt(),
-      audioUrl: json['audio_url'] as String,
+      tipo: TipoInstrumentoExtension.fromId(rawTipo.toString()),
+      precio: rawPrecio == null ? 0 : (rawPrecio as num).toInt(),
+      audioUrl: rawAudioUrl.toString(),
       comprable: json['comprable'] as bool? ?? true,
     );
   }
