@@ -14,13 +14,10 @@ const firebaseJwks = createRemoteJWKSet(
 );
 
 const instrumentIds = new Set([
-  "caja",
-  "guacharaca",
+  "bateria",
   "acordeon",
-  "piano",
-  "guitarra",
   "bajo",
-  "trompeta",
+  "guitarra",
 ]);
 
 type JsonObject = Record<string, unknown>;
@@ -95,17 +92,24 @@ function decodeFirestoreFields(fields: Record<string, unknown>): JsonObject {
 function encodeBase64Url(bytes: Uint8Array): string {
   let binary = "";
   for (const byte of bytes) binary += String.fromCharCode(byte);
-  return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
+  return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replace(
+    /=+$/,
+    "",
+  );
 }
 
-function pemToBytes(pem: string): Uint8Array {
+function pemToBytes(pem: string): ArrayBuffer {
   const base64 = pem
     .replace(/-----BEGIN PRIVATE KEY-----/g, "")
     .replace(/-----END PRIVATE KEY-----/g, "")
     .replace(/\s/g, "");
-  return Uint8Array.from(atob(base64), (character) =>
-    character.charCodeAt(0)
+  const bytes = Uint8Array.from(
+    atob(base64),
+    (character) => character.charCodeAt(0),
   );
+  const buffer = new ArrayBuffer(bytes.byteLength);
+  new Uint8Array(buffer).set(bytes);
+  return buffer;
 }
 
 async function createGoogleAccessToken(
@@ -156,7 +160,10 @@ async function createGoogleAccessToken(
   });
 
   if (!response.ok) {
-    console.error("Firebase service-account token request failed", response.status);
+    console.error(
+      "Firebase service-account token request failed",
+      response.status,
+    );
     throw new HttpError(502, "No se pudo autenticar el servicio con Firebase");
   }
 
@@ -184,7 +191,9 @@ async function firestoreGet(
     .map(encodeURIComponent)
     .join("/");
   const response = await fetch(
-    `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(projectId)}/databases/(default)/documents/${encodedPath}`,
+    `https://firestore.googleapis.com/v1/projects/${
+      encodeURIComponent(projectId)
+    }/databases/(default)/documents/${encodedPath}`,
     { headers: { Authorization: `Bearer ${accessToken}` } },
   );
 
@@ -228,7 +237,9 @@ async function signedStorageUrl(
     .map(encodeURIComponent)
     .join("/");
   const response = await fetch(
-    `${supabaseUrl}/storage/v1/object/sign/${encodeURIComponent(bucket)}/${encodedPath}`,
+    `${supabaseUrl}/storage/v1/object/sign/${
+      encodeURIComponent(bucket)
+    }/${encodedPath}`,
     {
       method: "POST",
       headers: {
@@ -241,7 +252,13 @@ async function signedStorageUrl(
   );
 
   if (!response.ok) {
-    console.error("Supabase signed URL request failed", response.status);
+    const errorBody = (await response.text()).slice(0, 1000);
+    console.error("Supabase signed URL request failed", {
+      status: response.status,
+      bucket,
+      objectPath,
+      error: errorBody,
+    });
     throw new HttpError(502, "No se pudo generar el enlace temporal del audio");
   }
 
@@ -257,7 +274,9 @@ async function signedStorageUrl(
 
   const storagePath = signedPath.startsWith("/storage/v1/")
     ? signedPath
-    : `/storage/v1${signedPath.startsWith("/") ? signedPath : `/${signedPath}`}`;
+    : `/storage/v1${
+      signedPath.startsWith("/") ? signedPath : `/${signedPath}`
+    }`;
   return `${supabaseUrl}${storagePath}`;
 }
 
@@ -317,7 +336,10 @@ async function handleRequest(request: Request): Promise<Response> {
       throw new HttpError(400, "El cuerpo de la solicitud no es JSON válido");
     }
     if (!rawBody || typeof rawBody !== "object" || Array.isArray(rawBody)) {
-      throw new HttpError(400, "El cuerpo de la solicitud debe ser un objeto JSON");
+      throw new HttpError(
+        400,
+        "El cuerpo de la solicitud debe ser un objeto JSON",
+      );
     }
     const body = rawBody as JsonObject;
 
@@ -326,8 +348,11 @@ async function handleRequest(request: Request): Promise<Response> {
     if (!validId(gameId)) {
       throw new HttpError(400, "gameId no es válido");
     }
-    if (type !== "stem" && type !== "fullSong") {
-      throw new HttpError(400, "type debe ser stem o fullSong");
+    if (type !== "stem" && type !== "instrumentalSong" && type !== "fullSong") {
+      throw new HttpError(
+        400,
+        "type debe ser stem, instrumentalSong o fullSong",
+      );
     }
 
     const serviceAccountRaw = requiredEnv("FIREBASE_SERVICE_ACCOUNT_JSON");
@@ -339,7 +364,10 @@ async function handleRequest(request: Request): Promise<Response> {
       }
       serviceAccount = rawAccount as ServiceAccount;
     } catch {
-      throw new HttpError(500, "FIREBASE_SERVICE_ACCOUNT_JSON no es JSON válido");
+      throw new HttpError(
+        500,
+        "FIREBASE_SERVICE_ACCOUNT_JSON no es JSON válido",
+      );
     }
     if (
       serviceAccount.project_id !== projectId ||
@@ -368,9 +396,20 @@ async function handleRequest(request: Request): Promise<Response> {
     let objectPath: string;
     let expiresIn: number;
 
-    if (type === "fullSong") {
-      if (!boolField(game, "ganada")) {
-        throw new HttpError(403, "La canción completa se desbloquea al ganar");
+    if (type === "fullSong" || type === "instrumentalSong") {
+      const won = boolField(game, "ganada");
+      const melodyFound = boolField(game, "melodiaDescubierta");
+      if (type === "fullSong" && !won) {
+        throw new HttpError(
+          403,
+          "La canción original se desbloquea al adivinar correctamente",
+        );
+      }
+      if (type === "instrumentalSong" && !melodyFound) {
+        throw new HttpError(
+          403,
+          "La versión instrumental se desbloquea al descubrir la melodía",
+        );
       }
       const level = await firestoreGet(
         projectId,
@@ -392,9 +431,15 @@ async function handleRequest(request: Request): Promise<Response> {
       if (!boolField(song, "published")) {
         throw new HttpError(404, "La canción no está publicada");
       }
-      bucket = Deno.env.get("SUPABASE_FULL_SONGS_BUCKET") ??
-        "canciones-completas";
-      objectPath = safeObjectPath(song.fullAudioPath);
+      if (type === "instrumentalSong") {
+        bucket = Deno.env.get("SUPABASE_INSTRUMENTAL_SONGS_BUCKET") ??
+          "canciones-instrumentales";
+        objectPath = safeObjectPath(song.instrumentalAudioPath);
+      } else {
+        bucket = Deno.env.get("SUPABASE_FULL_SONGS_BUCKET") ??
+          "canciones-completas";
+        objectPath = safeObjectPath(song.fullAudioPath);
+      }
       expiresIn = 1800;
     } else {
       const instrument = body.instrument;
@@ -418,11 +463,18 @@ async function handleRequest(request: Request): Promise<Response> {
 
       const point = game.puntoInicio;
       const fragmentsResponse = await fetch(
-        `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(projectId)}/databases/(default)/documents/levels/${encodeURIComponent(levelId)}/fragments?pageSize=100`,
+        `https://firestore.googleapis.com/v1/projects/${
+          encodeURIComponent(projectId)
+        }/databases/(default)/documents/levels/${
+          encodeURIComponent(levelId)
+        }/fragments?pageSize=100`,
         { headers: { Authorization: `Bearer ${firestoreToken}` } },
       );
       if (!fragmentsResponse.ok && fragmentsResponse.status !== 404) {
-        console.error("Firestore fragment listing failed", fragmentsResponse.status);
+        console.error(
+          "Firestore fragment listing failed",
+          fragmentsResponse.status,
+        );
         throw new HttpError(502, "No se pudo localizar el fragmento del nivel");
       }
       const fragmentsData = fragmentsResponse.ok
@@ -433,24 +485,22 @@ async function handleRequest(request: Request): Promise<Response> {
       const fragments = (fragmentsData.documents ?? []).map((document) =>
         decodeFirestoreFields(document.fields ?? {})
       );
-      const fragment = fragments.find((item) =>
-        item.inicioSegundos === point
-      );
+      const fragment = fragments.find((item) => item.inicioSegundos === point);
       const audioPaths = fragment?.audioPaths;
       const pathFromFragment = audioPaths &&
-        typeof audioPaths === "object" &&
-        !Array.isArray(audioPaths)
+          typeof audioPaths === "object" &&
+          !Array.isArray(audioPaths)
         ? (audioPaths as JsonObject)[instrument]
         : undefined;
       const instruments = level.instrumentos;
       const instrumentData = instruments &&
-        typeof instruments === "object" &&
-        !Array.isArray(instruments)
+          typeof instruments === "object" &&
+          !Array.isArray(instruments)
         ? (instruments as JsonObject)[instrument]
         : undefined;
       const pathFromLevel = instrumentData &&
-        typeof instrumentData === "object" &&
-        !Array.isArray(instrumentData)
+          typeof instrumentData === "object" &&
+          !Array.isArray(instrumentData)
         ? (instrumentData as JsonObject).storagePath
         : undefined;
       objectPath = safeObjectPath(pathFromFragment ?? pathFromLevel);

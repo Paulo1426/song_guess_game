@@ -1,0 +1,54 @@
+{
+  "levels": [
+    {
+      "numero": 1,
+      "songId": "cancion-001",
+      "levelId": "facil-01",
+      "titulo": "Por supuesto que no",
+      "artista": "Martin Elias Diaz",
+      "respuesta": "Por supuesto que no",
+      "fullAudioPath": "cancion-001/por_supuesto_que_no.mp3",
+      "instrumentalAudioPath": "cancion-001/por_supuesto_que_no_instrumental.mp3"
+    },
+    {
+      "numero": 2,
+      "songId": "cancion-002",
+      "levelId": "facil-02",
+      "titulo": "A blanco y negro",
+      "artista": "Silvestre Dangond",
+      "respuesta": "A blanco y negro",
+      "fullAudioPath": "cancion-002/A_Blanco_y_Negro.mp3",
+      "instrumentalAudioPath": "cancion-002/A_Blanco_y_Negro_instrumental.mp3"
+    },
+    {
+      "numero": 3,
+      "songId": "cancion-003",
+      "levelId": "facil-03",
+      "titulo": "Tira que jala",
+      "artista": "Kvrass",
+      "respuesta": "Tira que jala",
+      "fullAudioPath": "cancion-003/Tira_Que_Jala.mp3",
+      "instrumentalAudioPath": "cancion-003/Tira_Que_Jala_instrumental.mp3"
+    },
+    {
+      "numero": 4,
+      "songId": "cancion-004",
+      "levelId": "facil-04",
+      "titulo": "Los caminos de la vida",
+      "artista": "Los Diablitos",
+      "respuesta": "Los caminos de la vida",
+      "fullAudioPath": "cancion-004/Los_Caminos_de_la_vida.mp3",
+      "instrumentalAudioPath": "cancion-004/Los_Caminos_de_la_vida_instrumental.mp3"
+    },
+    {
+      "numero": 5,
+      "songId": "cancion-005",
+      "levelId": "facil-05",
+      "titulo": "Obsesion",
+      "artista": "Peter Manjarrés",
+      "respuesta": "Obsesión",
+      "fullAudioPath": "cancion-005/Obsesion.mp3",
+      "instrumentalAudioPath": "cancion-005/Obsesion_instrumental.mp3"
+    }
+  ]
+}

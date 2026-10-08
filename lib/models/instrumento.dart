@@ -1,32 +1,18 @@
-enum TipoInstrumento {
-  caja,
-  guacharaca,
-  acordeon,
-  piano,
-  guitarra,
-  bajo,
-  trompeta,
-}
+enum TipoInstrumento { bateria, acordeon, bajo, guitarra }
 
 extension TipoInstrumentoExtension on TipoInstrumento {
   String get id => name;
 
   String get nombre {
     switch (this) {
-      case TipoInstrumento.caja:
-        return 'Caja';
-      case TipoInstrumento.guacharaca:
-        return 'Guacharaca';
+      case TipoInstrumento.bateria:
+        return 'Batería';
       case TipoInstrumento.acordeon:
         return 'Acordeón';
-      case TipoInstrumento.piano:
-        return 'Piano';
-      case TipoInstrumento.guitarra:
-        return 'Guitarra';
       case TipoInstrumento.bajo:
         return 'Bajo';
-      case TipoInstrumento.trompeta:
-        return 'Trompeta';
+      case TipoInstrumento.guitarra:
+        return 'Guitarra';
     }
   }
 
@@ -42,15 +28,14 @@ class Instrumento {
   final TipoInstrumento tipo;
   final int precio;
   final String audioUrl;
+  final bool comprable;
 
   const Instrumento({
     required this.tipo,
     required this.precio,
     required this.audioUrl,
-  }) : assert(precio == 100000 ||
-            precio == 200000 ||
-            precio == 300000 ||
-            precio == 400000);
+    this.comprable = true,
+  }) : assert(precio == 0 || precio == 300000 || precio == 400000);
 
   String get id => tipo.id;
   String get nombre => tipo.nombre;
@@ -60,24 +45,28 @@ class Instrumento {
       tipo: TipoInstrumentoExtension.fromId(json['tipo'] as String),
       precio: (json['precio'] as num).toInt(),
       audioUrl: json['audio_url'] as String,
+      comprable: json['comprable'] as bool? ?? true,
     );
   }
 
   Map<String, dynamic> toJson() => {
-        'tipo': id,
-        'precio': precio,
-        'audio_url': audioUrl,
-      };
+    'tipo': id,
+    'precio': precio,
+    'audio_url': audioUrl,
+    'comprable': comprable,
+  };
 
   Instrumento copyWith({
     TipoInstrumento? tipo,
     int? precio,
     String? audioUrl,
+    bool? comprable,
   }) {
     return Instrumento(
       tipo: tipo ?? this.tipo,
       precio: precio ?? this.precio,
       audioUrl: audioUrl ?? this.audioUrl,
+      comprable: comprable ?? this.comprable,
     );
   }
 }

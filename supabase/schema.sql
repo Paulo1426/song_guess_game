@@ -1,7 +1,6 @@
 create type public.dificultad as enum ('facil', 'medio', 'avanzado');
 create type public.tipo_instrumento as enum (
-  'caja', 'guacharaca', 'acordeon', 'piano',
-  'guitarra', 'bajo', 'trompeta'
+  'bateria', 'acordeon', 'bajo', 'guitarra'
 );
 
 create table public.perfiles (
@@ -41,27 +40,9 @@ create table public.niveles (
 create table public.nivel_instrumentos (
   nivel_id text not null references public.niveles(id) on delete cascade,
   tipo public.tipo_instrumento not null,
-  precio int not null check (precio in (100000, 200000, 300000, 400000)),
   audio_path text not null,
   primary key (nivel_id, tipo)
 );
-
-create or replace function public.validar_nivel_instrumentos()
-returns trigger language plpgsql as $$
-declare total int;
-begin
-  select coalesce(sum(precio), 0) into total
-  from public.nivel_instrumentos where nivel_id = new.nivel_id;
-  if total > 2000000 then
-    raise exception 'El presupuesto del nivel no puede superar 2000000';
-  end if;
-  return new;
-end;
-$$;
-
-create trigger nivel_instrumentos_presupuesto
-after insert or update on public.nivel_instrumentos
-for each row execute function public.validar_nivel_instrumentos();
 
 create or replace function public.crear_perfil_y_progreso()
 returns trigger language plpgsql security definer set search_path = public as $$

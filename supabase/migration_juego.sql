@@ -10,7 +10,7 @@
 
 begin;
 
--- 1. Un fragmento representa cinco segundos sincronizados de una cancion.
+-- 1. Un fragmento normal dura 30 segundos; el modo de prueba admite 20.
 create table if not exists public.fragmentos_audio (
   id uuid primary key default gen_random_uuid(),
   cancion_id uuid not null
@@ -19,11 +19,16 @@ create table if not exists public.fragmentos_audio (
     check (numero > 0),
   inicio_segundos integer not null
     check (inicio_segundos >= 0),
-  duracion_segundos integer not null default 5
-    check (duracion_segundos = 5),
+  duracion_segundos integer not null default 30,
   created_at timestamptz not null default now(),
   unique (cancion_id, numero)
 );
+
+alter table public.fragmentos_audio
+  drop constraint if exists fragmentos_audio_duracion_segundos_check;
+alter table public.fragmentos_audio
+  add constraint fragmentos_audio_duracion_segundos_check
+  check (duracion_segundos in (20, 30)) not valid;
 
 create index if not exists fragmentos_audio_cancion_idx
   on public.fragmentos_audio(cancion_id);
@@ -43,8 +48,8 @@ create table if not exists public.partidas (
     references public.perfiles(id) on delete cascade,
   nivel_id text not null
     references public.niveles(id) on delete restrict,
-  presupuesto_restante integer not null default 2000000
-    check (presupuesto_restante between 0 and 2000000),
+  presupuesto_restante integer not null default 1000000
+    check (presupuesto_restante between 0 and 1000000),
   punto_inicio integer not null
     check (punto_inicio >= 0),
   instrumentos_comprados public.tipo_instrumento[] not null default '{}',
@@ -60,17 +65,38 @@ create index if not exists partidas_usuario_idx
 create index if not exists partidas_nivel_idx
   on public.partidas(nivel_id);
 
+-- Actualiza las partidas existentes a la nueva economia de $1.000.000.
+update public.partidas
+set presupuesto_restante = least(presupuesto_restante, 1000000)
+where presupuesto_restante > 1000000;
+
+alter table public.partidas
+  drop constraint if exists partidas_presupuesto_restante_check;
+alter table public.partidas
+  add constraint partidas_presupuesto_restante_check
+  check (presupuesto_restante between 0 and 1000000);
+
 -- 4. Las compras dependen de que exista una partida.
+alter type public.tipo_instrumento add value if not exists 'bateria';
+
 create table if not exists public.compras_partida (
   id uuid primary key default gen_random_uuid(),
   partida_id uuid not null
     references public.partidas(id) on delete cascade,
   instrumento public.tipo_instrumento not null,
   precio integer not null
-    check (precio in (100000, 200000, 300000, 400000)),
+    check (precio in (300000, 400000)),
   created_at timestamptz not null default now(),
   unique (partida_id, instrumento)
 );
+
+alter table public.compras_partida
+  drop constraint if exists compras_partida_precio_check;
+-- Conserva registros historicos con precios anteriores; las compras nuevas
+-- deben cumplir el rango vigente.
+alter table public.compras_partida
+  add constraint compras_partida_precio_check
+  check (precio in (300000, 400000)) not valid;
 
 create index if not exists compras_partida_partida_idx
   on public.compras_partida(partida_id);

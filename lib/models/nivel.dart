@@ -8,16 +8,18 @@ extension DificultadExtension on Dificultad {
   String get id => name;
 
   static Dificultad fromId(String value) {
+    final normalizedValue = value.trim();
     return Dificultad.values.firstWhere(
-      (dificultad) => dificultad.id == value,
-      orElse: () => throw FormatException('Dificultad desconocida: $value'),
+      (dificultad) => dificultad.id == normalizedValue,
+      orElse: () =>
+          throw FormatException('Dificultad desconocida: $normalizedValue'),
     );
   }
 }
 
 class Nivel {
-  static const presupuestoTotal = 2000000;
-  static const duracionFragmento = Duration(seconds: 5);
+  static const presupuestoTotal = 1000000;
+  static const duracionFragmento = Duration(seconds: 30);
   static const tiposEsperados = TipoInstrumento.values;
 
   final String id;
@@ -28,6 +30,8 @@ class Nivel {
   final List<Instrumento> instrumentos;
   final TipoInstrumento? instrumentoMelodia;
   final List<int> puntosInicio;
+  final bool modoPrueba;
+  final int duracionFragmentoSegundos;
 
   Nivel({
     required this.id,
@@ -38,6 +42,8 @@ class Nivel {
     required List<Instrumento> instrumentos,
     this.instrumentoMelodia,
     this.puntosInicio = const [],
+    this.modoPrueba = false,
+    this.duracionFragmentoSegundos = 30,
   }) : instrumentos = List.unmodifiable(instrumentos) {
     _validar();
   }
@@ -52,14 +58,14 @@ class Nivel {
     Random? random,
   }) {
     final rng = random ?? Random();
-    final unidades = <int>[1, 2, 2, 3, 4, 4, 4]..shuffle(rng);
     final tipos = [...TipoInstrumento.values]..shuffle(rng);
     final instrumentos = [
-      for (var i = 0; i < tipos.length; i++)
+      for (final tipo in tipos)
         Instrumento(
-          tipo: tipos[i],
-          precio: unidades[i] * 100000,
-          audioUrl: audios[tipos[i]] ?? '',
+          tipo: tipo,
+          precio: 0,
+          audioUrl: audios[tipo] ?? '',
+          comprable: true,
         ),
     ];
 
@@ -70,7 +76,6 @@ class Nivel {
       cancionId: cancionId,
       cancionTitulo: cancionTitulo,
       instrumentos: instrumentos,
-      instrumentoMelodia: tipos[rng.nextInt(tipos.length)],
     );
   }
 
@@ -78,16 +83,35 @@ class Nivel {
       instrumentos.firstWhere((instrumento) => instrumento.tipo == tipo);
 
   void _validar() {
-    if (instrumentos.length != tiposEsperados.length) {
-      throw ArgumentError('Cada nivel debe tener exactamente 7 instrumentos');
+    final cantidadEsperada = modoPrueba ? 3 : tiposEsperados.length;
+    if (instrumentos.length != cantidadEsperada) {
+      throw ArgumentError(
+        modoPrueba
+            ? 'Un nivel de prueba debe tener exactamente 3 instrumentos'
+            : 'Cada nivel debe tener exactamente 4 instrumentos',
+      );
     }
     if (instrumentos.map((instrumento) => instrumento.tipo).toSet().length !=
-        tiposEsperados.length) {
+        instrumentos.length) {
       throw ArgumentError('Los instrumentos de un nivel no pueden repetirse');
     }
-    if (instrumentos.fold<int>(0, (total, item) => total + item.precio) !=
-        presupuestoTotal) {
-      throw ArgumentError('Los precios deben sumar exactamente 2.000.000');
+    if (!instrumentos.any((item) => item.tipo == TipoInstrumento.acordeon) ||
+        !instrumentos.any((item) => item.tipo == TipoInstrumento.bateria)) {
+      throw ArgumentError('Cada nivel debe incluir acordeón y batería');
+    }
+    if (instrumentos.any(
+      (instrumento) => instrumento.precio != 0 || !instrumento.comprable,
+    )) {
+      throw ArgumentError(
+        'Los instrumentos de un nivel deben estar disponibles sin precio asignado',
+      );
+    }
+    if (duracionFragmentoSegundos != (modoPrueba ? 20 : 30)) {
+      throw ArgumentError(
+        modoPrueba
+            ? 'Los fragmentos de prueba deben durar 20 segundos'
+            : 'Los fragmentos normales deben durar 30 segundos',
+      );
     }
     if (instrumentoMelodia != null &&
         !instrumentos.any((item) => item.tipo == instrumentoMelodia)) {
@@ -114,6 +138,9 @@ class Nivel {
       puntosInicio: (json['puntos_inicio'] as List<dynamic>? ?? [])
           .map((item) => (item as num).toInt())
           .toList(),
+      modoPrueba: json['modo_prueba'] as bool? ?? false,
+      duracionFragmentoSegundos:
+          (json['duracion_fragmento_segundos'] as num?)?.toInt() ?? 30,
     );
   }
 
@@ -127,5 +154,7 @@ class Nivel {
     if (instrumentoMelodia != null)
       'instrumento_melodia': instrumentoMelodia!.id,
     'puntos_inicio': puntosInicio,
+    'modo_prueba': modoPrueba,
+    'duracion_fragmento_segundos': duracionFragmentoSegundos,
   };
 }

@@ -1,4 +1,14 @@
 import { createRemoteJWKSet, jwtVerify } from "https://esm.sh/jose@5.9.6";
+import {
+  canPurchaseInstrument,
+  maxPurchasedInstruments,
+  selectMelodyInstrument,
+  selectNextInstrumentPrice,
+} from "./pricing.ts";
+import {
+  levelsPerDifficulty,
+  selectDifficultyLevels,
+} from "./level_selection.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -16,13 +26,10 @@ const difficulties = ["facil", "medio", "avanzado"] as const;
 type Difficulty = (typeof difficulties)[number];
 type JsonObject = Record<string, unknown>;
 const instrumentTypes = new Set([
-  "caja",
-  "guacharaca",
+  "bateria",
   "acordeon",
-  "piano",
-  "guitarra",
   "bajo",
-  "trompeta",
+  "guitarra",
 ]);
 
 interface FirestoreDocument {
@@ -82,6 +89,10 @@ function fromFields(fields: Record<string, unknown>): JsonObject {
   );
 }
 
+function normalizeDifficulty(value: unknown): string | undefined {
+  return typeof value === "string" ? value.trim() : undefined;
+}
+
 function toValue(value: unknown): JsonObject {
   if (value === null) return { nullValue: null };
   if (typeof value === "string") return { stringValue: value };
@@ -105,7 +116,7 @@ function toFields(value: JsonObject): Record<string, unknown> {
     Object.entries(value).map(([key, field]) => [
       key,
       typeof field === "string" &&
-          (key === "createdAt" || key === "updatedAt")
+        (key === "createdAt" || key === "updatedAt")
         ? { timestampValue: field }
         : toValue(field),
     ]),
@@ -115,19 +126,27 @@ function toFields(value: JsonObject): Record<string, unknown> {
 function base64Url(bytes: Uint8Array): string {
   let binary = "";
   for (const byte of bytes) binary += String.fromCharCode(byte);
-  return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
+  return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replace(
+    /=+$/,
+    "",
+  );
 }
 
-function privateKeyBytes(pem: string): Uint8Array {
+function privateKeyBytes(pem: string): ArrayBuffer {
   const encoded = pem
     .replace(/-----BEGIN PRIVATE KEY-----/g, "")
     .replace(/-----END PRIVATE KEY-----/g, "")
     .replace(/\s/g, "");
-  return Uint8Array.from(atob(encoded), (char) => char.charCodeAt(0));
+  const bytes = Uint8Array.from(atob(encoded), (char) => char.charCodeAt(0));
+  const buffer = new ArrayBuffer(bytes.byteLength);
+  new Uint8Array(buffer).set(bytes);
+  return buffer;
 }
 
 async function firestoreToken(): Promise<string> {
-  if (cachedServiceToken && cachedServiceToken.expiresAt > Date.now() + 60_000) {
+  if (
+    cachedServiceToken && cachedServiceToken.expiresAt > Date.now() + 60_000
+  ) {
     return cachedServiceToken.token;
   }
   let account: ServiceAccount;
@@ -186,7 +205,10 @@ async function firestoreToken(): Promise<string> {
     }),
   });
   if (!tokenResponse.ok) {
-    console.error("Firebase service token exchange failed", tokenResponse.status);
+    console.error(
+      "Firebase service token exchange failed",
+      tokenResponse.status,
+    );
     throw new HttpError(502, "No se pudo autenticar con Firestore");
   }
   const tokenData = await tokenResponse.json() as {
@@ -223,7 +245,13 @@ async function getDocument(
   });
   if (result.status === 404) return null;
   if (!result.ok) {
-    console.error("Firestore document read failed", result.status, path);
+    const details = (await result.text()).slice(0, 2000);
+    console.error(
+      "Firestore document read failed",
+      result.status,
+      path,
+      details,
+    );
     throw new HttpError(502, "No se pudieron consultar los datos del juego");
   }
   const document = await result.json() as FirestoreDocument;
@@ -245,7 +273,13 @@ async function listCollection(
     headers: { Authorization: `Bearer ${token}` },
   });
   if (!result.ok) {
-    console.error("Firestore collection read failed", result.status, path);
+    const details = (await result.text()).slice(0, 2000);
+    console.error(
+      "Firestore collection read failed",
+      result.status,
+      path,
+      details,
+    );
     throw new HttpError(502, "No se pudieron consultar los niveles");
   }
   const data = await result.json() as {
@@ -279,7 +313,10 @@ async function commitWrites(
     },
   );
   if (result.status === 409 || result.status === 412) {
-    throw new HttpError(409, "El progreso cambió en otra solicitud; inténtalo de nuevo");
+    throw new HttpError(
+      409,
+      "El progreso cambió en otra solicitud; inténtalo de nuevo",
+    );
   }
   if (!result.ok) {
     const details = await result.text();
@@ -291,6 +328,36 @@ async function commitWrites(
     }
     console.error("Firestore commit failed", result.status, details);
     throw new HttpError(502, "No se pudo guardar el progreso del juego");
+  }
+}
+
+async function clearDocuments(
+  token: string,
+  paths: string[],
+): Promise<void> {
+  for (let index = 0; index < paths.length; index += 450) {
+    await commitWrites(
+      token,
+      paths.slice(index, index + 450).map((name) => ({ delete: name })),
+    );
+  }
+}
+
+async function clearGuestSession(token: string, uid: string): Promise<void> {
+  const collections = [
+    "games",
+    `guestSessions/${uid}/progress`,
+    `guestSessions/${uid}/difficultyOrders`,
+  ];
+  for (const collection of collections) {
+    const documents = await listCollection(token, collection);
+    const paths = documents
+      .filter((document) =>
+        collection === "games" ? document.fields?.uid === uid : true
+      )
+      .map((document) => document.name)
+      .filter((name): name is string => typeof name === "string");
+    await clearDocuments(token, paths);
   }
 }
 
@@ -340,75 +407,87 @@ function shuffled<T>(items: T[]): T[] {
   return result;
 }
 
-function userPath(uid: string, collection: string, difficulty: Difficulty) {
-  return `users/${uid}/${collection}/${difficulty}`;
+function userPath(
+  uid: string,
+  collection: string,
+  difficulty: Difficulty,
+  guest = false,
+) {
+  const root = guest ? `guestSessions/${uid}` : `users/${uid}`;
+  return `${root}/${collection}/${difficulty}`;
 }
 
 async function ensureOrder(
   token: string,
   uid: string,
   difficulty: Difficulty,
+  guest = false,
 ): Promise<string[]> {
-  const path = userPath(uid, "difficultyOrders", difficulty);
+  const path = userPath(uid, "difficultyOrders", difficulty, guest);
   const existing = await getDocument(token, path);
   const documents = await listCollection(token, "levels");
-  const levels = documents.filter((document) => {
-    const fields = fromFields(document.fields ?? {});
-    return fields.dificultad === difficulty && fields.published === true;
-  }).map((document) => document.name?.split("/").at(-1))
-    .filter((id): id is string => typeof id === "string");
+  const levels = selectDifficultyLevels(
+    documents.map((document) => {
+      const fields = fromFields(document.fields ?? {});
+      return {
+        id: document.name?.split("/").at(-1) ?? "",
+        numero: typeof fields.numero === "number" ? fields.numero : Number.NaN,
+        dificultad: normalizeDifficulty(fields.dificultad) ?? "",
+        published: fields.published === true,
+      };
+    }),
+    difficulty,
+  ).map((level) => level.id);
   if (existing) {
-  const rawOrder = existing.fields.levelIds;
-  if (
-    !Array.isArray(rawOrder) ||
-    !rawOrder.every((id) => typeof id === "string")
-  ) {
-    throw new HttpError(500, "El orden guardado tiene un formato inválido");
-  }
-  const currentOrder = rawOrder as string[];
-  const progress = await getDocument(
-    token,
-    userPath(uid, "progress", difficulty),
-  );
-  const completed = new Set(
-    Array.isArray(progress?.fields.completedLevelIds)
-      ? (progress?.fields.completedLevelIds as unknown[])
-        .filter((id): id is string => typeof id === "string")
-      : [],
-  );
-  const difficultyComplete = currentOrder.every((id) => completed.has(id));
-  const additions = difficultyComplete
-    ? []
-    : shuffled(levels.filter((id) => !currentOrder.includes(id)));
-  if (additions.length === 0) return currentOrder;
-  if (!existing.updateTime) {
-    throw new HttpError(500, "No se pudo validar la versión del orden guardado");
-  }
-  const extendedOrder = [...currentOrder, ...additions];
-  try {
-    await commitWrites(token, [
-      updateWrite(
-        path,
-        { levelIds: extendedOrder, updatedAt: new Date().toISOString() },
-        existing.updateTime,
-      ),
-    ]);
-    return extendedOrder;
-  } catch (error) {
-    if (!(error instanceof HttpError) || error.status !== 409) throw error;
-    const latest = await getDocument(token, path);
-    const latestIds = latest?.fields.levelIds;
+    const rawOrder = existing.fields.levelIds;
     if (
-      !Array.isArray(latestIds) ||
-      !latestIds.every((id) => typeof id === "string")
+      !Array.isArray(rawOrder) ||
+      !rawOrder.every((id) => typeof id === "string")
     ) {
-      throw error;
+      throw new HttpError(500, "El orden guardado tiene un formato inválido");
     }
-    return latestIds as string[];
-  }
+    const availableIds = new Set(levels);
+    const currentOrder = [...new Set(rawOrder as string[])].filter((id) =>
+      availableIds.has(id)
+    );
+    const additions = shuffled(
+      levels.filter((id) => !currentOrder.includes(id)),
+    );
+    if (
+      additions.length === 0 &&
+      currentOrder.length === rawOrder.length
+    ) return currentOrder;
+    if (!existing.updateTime) {
+      throw new HttpError(
+        500,
+        "No se pudo validar la versión del orden guardado",
+      );
+    }
+    const extendedOrder = [...currentOrder, ...additions];
+    try {
+      await commitWrites(token, [
+        updateWrite(
+          path,
+          { levelIds: extendedOrder, updatedAt: new Date().toISOString() },
+          existing.updateTime,
+        ),
+      ]);
+      return extendedOrder;
+    } catch (error) {
+      if (!(error instanceof HttpError) || error.status !== 409) throw error;
+      const latest = await getDocument(token, path);
+      const latestIds = latest?.fields.levelIds;
+      if (
+        !Array.isArray(latestIds) ||
+        !latestIds.every((id) => typeof id === "string")
+      ) {
+        throw error;
+      }
+      return (latestIds as string[]).filter((id) => levels.includes(id));
+    }
   }
   if (levels.length === 0) {
-  return [];
+    return [];
   }
 
   const levelIds = shuffled(levels);
@@ -427,13 +506,108 @@ async function ensureOrder(
     if (!Array.isArray(ids) || !ids.every((id) => typeof id === "string")) {
       throw error;
     }
-    return ids as string[];
+    return (ids as string[]).filter((id) => levels.includes(id));
   }
+}
+
+async function buildLevelEntry(
+  token: string,
+  id: string,
+  difficulty: Difficulty,
+  completed: Set<string>,
+  canStart: boolean,
+): Promise<JsonObject> {
+  const document = await getDocument(token, `levels/${id}`);
+  if (!document || document.fields.published !== true) {
+    throw new HttpError(
+      409,
+      "Un nivel del orden guardado dejó de estar publicado",
+    );
+  }
+  const fields = document.fields;
+  const songId = fields.cancionId;
+  const levelDifficulty = normalizeDifficulty(fields.dificultad);
+  if (
+    !validId(songId) ||
+    !Number.isInteger(fields.numero) ||
+    levelDifficulty !== difficulty
+  ) {
+    throw new HttpError(500, `El nivel ${id} tiene metadatos inválidos`);
+  }
+  const rawInstruments = fields.instrumentos;
+  if (!rawInstruments || typeof rawInstruments !== "object") {
+    throw new HttpError(500, `El nivel ${id} no tiene instrumentos`);
+  }
+  const instrumentEntries = Object.entries(rawInstruments as JsonObject);
+  const testMode = fields.modoPrueba === true;
+  const expectedInstrumentCount = testMode ? 3 : instrumentTypes.size;
+  if (instrumentEntries.length !== expectedInstrumentCount) {
+    throw new HttpError(
+      500,
+      testMode
+        ? `El nivel de prueba ${id} debe tener tres instrumentos`
+        : `El nivel ${id} debe tener cuatro instrumentos`,
+    );
+  }
+  if (
+    !instrumentEntries.some(([type]) => type === "acordeon") ||
+    !instrumentEntries.some(([type]) => type === "bateria")
+  ) {
+    throw new HttpError(
+      500,
+      `El nivel ${id} debe incluir acordeón y batería`,
+    );
+  }
+  const instruments = instrumentEntries.map(([type, value]) => {
+    if (!instrumentTypes.has(type)) {
+      throw new HttpError(500, `El instrumento ${type} no es válido`);
+    }
+    if (!value || typeof value !== "object") {
+      throw new HttpError(500, `El instrumento ${type} del nivel no es válido`);
+    }
+    const instrument = value as JsonObject;
+    if (
+      typeof instrument.storagePath !== "string" ||
+      instrument.storagePath.length === 0
+    ) {
+      throw new HttpError(
+        500,
+        `El instrumento ${type} del nivel no tiene audio configurado`,
+      );
+    }
+    return { tipo: type, precio: 0, audio_url: "", comprable: true };
+  });
+  const durationSeconds = fields.duracionFragmentoSegundos ??
+    (testMode ? 20 : 30);
+  if (durationSeconds !== (testMode ? 20 : 30)) {
+    throw new HttpError(
+      500,
+      testMode
+        ? `El nivel de prueba ${id} debe usar fragmentos de 20 segundos`
+        : `El nivel ${id} debe usar fragmentos de 30 segundos`,
+    );
+  }
+  return {
+    nivel: {
+      id,
+      numero: fields.numero,
+      dificultad: levelDifficulty,
+      cancion_id: songId,
+      cancion_titulo: "Canción misteriosa",
+      instrumentos: instruments,
+      puntos_inicio: fields.puntosInicio ?? [],
+      modo_prueba: testMode,
+      duracion_fragmento_segundos: durationSeconds,
+    },
+    completado: completed.has(id),
+    puede_iniciar: canStart,
+  };
 }
 
 async function getProgress(
   token: string,
   uid: string,
+  guest = false,
 ): Promise<JsonObject> {
   const summaries: JsonObject[] = [];
   let activeDifficulty: Difficulty = "facil";
@@ -454,7 +628,7 @@ async function getProgress(
       });
       continue;
     }
-    const order = await ensureOrder(token, uid, difficulty);
+    const order = await ensureOrder(token, uid, difficulty, guest);
     if (order.length === 0) {
       summaries.push({
         dificultad: difficulty,
@@ -470,7 +644,7 @@ async function getProgress(
     }
     const progressDoc = await getDocument(
       token,
-      userPath(uid, "progress", difficulty),
+      userPath(uid, "progress", difficulty, guest),
     );
     const ids = progressDoc?.fields.completedLevelIds;
     const completed = new Set(
@@ -478,7 +652,8 @@ async function getProgress(
         ? ids.filter((id): id is string => typeof id === "string")
         : [],
     );
-    const done = order.every((levelId) => completed.has(levelId));
+    const done = order.length === levelsPerDifficulty &&
+      order.every((levelId) => completed.has(levelId));
     summaries.push({
       dificultad: difficulty,
       desbloqueada: true,
@@ -509,77 +684,195 @@ async function getProgress(
     }
   }
 
+  const nextActiveId = activeOrder.find((id) => !activeCompleted.has(id));
   const levelEntries = await Promise.all(
-    activeOrder.map(async (id) => {
-      const document = await getDocument(token, `levels/${id}`);
-      if (!document || document.fields.published !== true) {
-        throw new HttpError(409, "Un nivel del orden guardado dejó de estar publicado");
-      }
-      const fields = document.fields;
-      const songId = fields.cancionId;
-      if (
-        !validId(songId) ||
-        !Number.isInteger(fields.numero) ||
-        fields.dificultad !== activeDifficulty
-      ) {
-        throw new HttpError(500, `El nivel ${id} tiene metadatos inválidos`);
-      }
-      const rawInstruments = fields.instrumentos;
-      if (!rawInstruments || typeof rawInstruments !== "object") {
-        throw new HttpError(500, `El nivel ${id} no tiene instrumentos`);
-      }
-      const instrumentEntries = Object.entries(rawInstruments as JsonObject);
-      if (instrumentEntries.length !== instrumentTypes.size) {
-        throw new HttpError(500, `El nivel ${id} debe tener siete instrumentos`);
-      }
-      let totalPrice = 0;
-      const instruments = instrumentEntries.map(([type, value]) => {
-        if (!instrumentTypes.has(type)) {
-          throw new HttpError(500, `El instrumento ${type} no es válido`);
-        }
-          if (!value || typeof value !== "object") {
-            throw new HttpError(500, `El instrumento ${type} del nivel no es válido`);
-          }
-          const instrument = value as JsonObject;
-          const price = instrument.precio;
-          if (
-            typeof price !== "number" ||
-            ![100000, 200000, 300000, 400000].includes(price) ||
-            typeof instrument.storagePath !== "string"
-          ) {
-            throw new HttpError(500, `El instrumento ${type} del nivel no está completo`);
-          }
-          totalPrice += price;
-          return {
-            tipo: type,
-            precio: price,
-            audio_url: "",
-          };
-      });
-      if (totalPrice !== 2000000) {
-        throw new HttpError(500, `El presupuesto del nivel ${id} debe sumar 2.000.000`);
-      }
-      const nivel = {
+    activeOrder.map((id) =>
+      buildLevelEntry(
+        token,
         id,
-        numero: fields.numero,
-        dificultad: fields.dificultad,
-        cancion_id: songId,
-        cancion_titulo: "Canción misteriosa",
-        instrumentos: instruments,
-        puntos_inicio: fields.puntosInicio ?? [],
-      };
-      return {
-        nivel,
-        completado: activeCompleted.has(id),
-        puede_iniciar: !activeCompleted.has(id) &&
-          activeOrder.find((levelId) => !activeCompleted.has(levelId)) === id,
-      };
-    }),
+        activeDifficulty,
+        activeCompleted,
+        activeCompleted.has(id) || id === nextActiveId,
+      )
+    ),
   );
+  const activeIndex = difficulties.indexOf(activeDifficulty);
+  const replayEntries: JsonObject[] = [];
+  for (const difficulty of difficulties.slice(0, activeIndex)) {
+    const order = await ensureOrder(token, uid, difficulty, guest);
+    const progress = await getDocument(
+      token,
+      userPath(uid, "progress", difficulty, guest),
+    );
+    const ids = progress?.fields.completedLevelIds;
+    const completed = new Set(
+      Array.isArray(ids)
+        ? ids.filter((id): id is string => typeof id === "string")
+        : [],
+    );
+    const completedIds = order.filter((id) => completed.has(id));
+    replayEntries.push(
+      ...await Promise.all(
+        completedIds.map((id) =>
+          buildLevelEntry(token, id, difficulty, completed, true)
+        ),
+      ),
+    );
+  }
   return {
     dificultades: summaries,
     dificultad_activa: activeDifficulty,
     niveles: levelEntries,
+    niveles_repetibles: replayEntries,
+  };
+}
+
+async function purchaseInstrument(
+  token: string,
+  uid: string,
+  gameId: string,
+  instrumentId: string,
+): Promise<JsonObject> {
+  if (!instrumentTypes.has(instrumentId)) {
+    throw new HttpError(400, "El instrumento no es válido");
+  }
+  const gamePath = `games/${gameId}`;
+  const game = await getDocument(token, gamePath);
+  if (!game) throw new HttpError(404, "No se encontró la partida");
+  if (game.fields.uid !== uid) {
+    throw new HttpError(403, "La partida no pertenece a este usuario");
+  }
+  if (game.fields.ganada === true) {
+    throw new HttpError(409, "La partida ya fue completada");
+  }
+  const levelId = game.fields.levelId;
+  if (typeof levelId !== "string" || !validId(levelId)) {
+    throw new HttpError(500, "La partida no tiene un nivel válido");
+  }
+  const level = await getDocument(token, `levels/${levelId}`);
+  if (!level || level.fields.published !== true) {
+    throw new HttpError(404, "El nivel no está disponible");
+  }
+  const rawInstruments = level.fields.instrumentos;
+  if (!rawInstruments || typeof rawInstruments !== "object") {
+    throw new HttpError(500, "El nivel no tiene instrumentos configurados");
+  }
+  const instrument = (rawInstruments as JsonObject)[instrumentId];
+  if (!instrument || typeof instrument !== "object") {
+    throw new HttpError(404, "El instrumento no pertenece a este nivel");
+  }
+  const storagePath = (instrument as JsonObject).storagePath;
+  const rawPrices = game.fields.preciosInstrumentos;
+  if (typeof storagePath !== "string" || storagePath.length === 0) {
+    throw new HttpError(
+      500,
+      "El instrumento no tiene un audio válido",
+    );
+  }
+  const purchased = Array.isArray(game.fields.instrumentosComprados)
+    ? (game.fields.instrumentosComprados as unknown[])
+      .filter((item): item is string => typeof item === "string")
+    : [];
+  const prices = rawPrices && typeof rawPrices === "object" &&
+      !Array.isArray(rawPrices)
+    ? Object.fromEntries(
+      purchased.map((type) => [type, (rawPrices as JsonObject)[type]]),
+    )
+    : {};
+  const purchasePrice = prices[instrumentId];
+  if (purchased.includes(instrumentId)) {
+    if (
+      typeof purchasePrice !== "number" ||
+      ![300000, 400000].includes(purchasePrice)
+    ) {
+      throw new HttpError(500, "No se encontró el precio de la compra");
+    }
+    return {
+      compraRealizada: false,
+      presupuestoRestante: game.fields.presupuestoRestante,
+      instrumentosComprados: purchased,
+      melodiaDescubierta: game.fields.melodiaDescubierta === true,
+      precioInstrumento: purchasePrice,
+    };
+  }
+  if (!canPurchaseInstrument(purchased.length)) {
+    throw new HttpError(
+      409,
+      "Ya compraste el máximo de tres instrumentos para esta partida",
+    );
+  }
+  const balance = game.fields.presupuestoRestante;
+  if (typeof balance !== "number" || !Number.isInteger(balance)) {
+    throw new HttpError(500, "El presupuesto de la partida no es válido");
+  }
+  const purchasedPrices = purchased.map((type) => {
+    const price = prices[type];
+    if (typeof price !== "number" || ![300000, 400000].includes(price)) {
+      throw new HttpError(500, "El historial de precios de la partida no es válido");
+    }
+    return price;
+  });
+  if (
+    balance !== 1000000 -
+      purchasedPrices.reduce((total, price) => total + price, 0)
+  ) {
+    throw new HttpError(409, "El saldo no coincide con las compras registradas");
+  }
+  let price: number;
+  try {
+    price = selectNextInstrumentPrice(purchasedPrices);
+  } catch (error) {
+    console.error("Invalid game purchase history", gameId, error);
+    throw new HttpError(500, "No se pudo calcular el precio de la compra");
+  }
+  if (price > balance) {
+    throw new HttpError(409, "No tienes presupuesto suficiente para comprarlo");
+  }
+  const instrumentsPurchased = [...purchased, instrumentId];
+  const updatedPrices = { ...prices, [instrumentId]: price };
+  let melodyInstrument = game.fields.instrumentoMelodia;
+  if (
+    instrumentsPurchased.length === maxPurchasedInstruments &&
+    (typeof melodyInstrument !== "string" ||
+      !instrumentTypes.has(melodyInstrument))
+  ) {
+    try {
+      melodyInstrument = selectMelodyInstrument(
+        Object.keys(rawInstruments as JsonObject),
+        instrumentsPurchased,
+      );
+    } catch (error) {
+      console.error("Could not assign game melody", gameId, error);
+      throw new HttpError(500, "No se pudo asignar la melodía de la partida");
+    }
+  }
+  const melodyFound = (typeof melodyInstrument === "string" &&
+    instrumentsPurchased.includes(melodyInstrument)) ||
+    game.fields.melodiaDescubierta === true;
+  const now = new Date().toISOString();
+  if (!game.updateTime) {
+    throw new HttpError(500, "No se pudo validar la versión de la partida");
+  }
+  await commitWrites(token, [
+    updateWrite(
+      gamePath,
+      {
+        presupuestoRestante: balance - price,
+        preciosInstrumentos: updatedPrices,
+        instrumentosComprados: instrumentsPurchased,
+        melodiaDescubierta: melodyFound,
+        instrumentoMelodia: melodyInstrument,
+        updatedAt: now,
+      },
+      game.updateTime,
+    ),
+  ]);
+  return {
+    compraRealizada: true,
+    presupuestoRestante: balance - price,
+    instrumentosComprados: instrumentsPurchased,
+    melodiaDescubierta: melodyFound,
+    precioInstrumento: price,
   };
 }
 
@@ -587,16 +880,26 @@ async function startLevel(
   token: string,
   uid: string,
   levelId: string,
+  guest = false,
 ): Promise<JsonObject> {
-  const state = await getProgress(token, uid);
+  const state = await getProgress(token, uid, guest);
   const available = (state.niveles as JsonObject[]).find((entry) => {
     const nivel = entry.nivel as JsonObject;
     return nivel.id === levelId;
   });
-  if (!available || available.puede_iniciar !== true) {
+  const replay = (state.niveles_repetibles as JsonObject[]).find((entry) => {
+    const nivel = entry.nivel as JsonObject;
+    return nivel.id === levelId;
+  });
+  const selected = available ?? replay;
+  if (
+    !selected ||
+    selected.puede_iniciar !== true ||
+    (selected.completado !== true && available?.puede_iniciar !== true)
+  ) {
     throw new HttpError(
       403,
-      "Ese nivel está bloqueado o ya fue completado. Continúa con el siguiente nivel habilitado.",
+      "Ese nivel está bloqueado. Completa los niveles anteriores o elige uno ya completado para repetirlo.",
     );
   }
 
@@ -605,20 +908,30 @@ async function startLevel(
   const gameId = Array.from(crypto.getRandomValues(new Uint8Array(16)))
     .map((byte) => byte.toString(16).padStart(2, "0"))
     .join("");
-  const nivel = available.nivel as JsonObject;
+  const nivel = selected.nivel as JsonObject;
   const points = nivel.puntos_inicio as number[];
-  const startPoint = points.length > 0
-    ? points[random[0] % points.length]
-    : 0;
+  const startPoint = points.length > 0 ? points[random[0] % points.length] : 0;
+  const instrumentList = nivel.instrumentos as JsonObject[];
+  const gameLevel = {
+    ...nivel,
+    instrumentos: instrumentList.map((instrument) => ({
+      tipo: instrument.tipo,
+      precio: 0,
+      audio_url: "",
+      comprable: true,
+    })),
+  };
   await commitWrites(token, [
     createWrite(`games/${gameId}`, {
       uid,
       levelId,
       dificultad: nivel.dificultad,
       puntoInicio: startPoint,
-      presupuestoRestante: 2000000,
+      presupuestoRestante: 1000000,
+      preciosInstrumentos: {},
       instrumentosComprados: [],
       melodiaDescubierta: false,
+      instrumentoMelodia: null,
       ganada: false,
       failedAnswerAttempts: 0,
       nextAnswerAt: null,
@@ -626,7 +939,7 @@ async function startLevel(
       updatedAt: new Date().toISOString(),
     }),
   ]);
-  return { gameId, nivel };
+  return { gameId, nivel: gameLevel };
 }
 
 async function submitAnswer(
@@ -634,6 +947,7 @@ async function submitAnswer(
   uid: string,
   gameId: string,
   answer: string,
+  guest = false,
 ): Promise<JsonObject> {
   const gamePath = `games/${gameId}`;
   const game = await getDocument(token, gamePath);
@@ -662,10 +976,10 @@ async function submitAnswer(
   const [level, answerDoc, order, progress] = await Promise.all([
     getDocument(token, `levels/${levelId}`),
     getDocument(token, `privateLevelAnswers/${levelId}`),
-    ensureOrder(token, uid, difficulty as Difficulty),
+    ensureOrder(token, uid, difficulty as Difficulty, guest),
     getDocument(
       token,
-      userPath(uid, "progress", difficulty as Difficulty),
+      userPath(uid, "progress", difficulty as Difficulty, guest),
     ),
   ]);
   if (!level || level.fields.published !== true || !answerDoc) {
@@ -700,19 +1014,25 @@ async function submitAnswer(
 
   const currentOrder = order;
   const completedIds = new Set(
-    Array.isArray(progress?.fields.completedLevelIds)
-      ? (progress?.fields.completedLevelIds as unknown[])
-        .filter((id): id is string => typeof id === "string")
+    Array.isArray(progress?.fields?.completedLevelIds)
+      ? (progress.fields.completedLevelIds as unknown[])
+        .filter((id): id is string =>
+          typeof id === "string" && order.includes(id)
+        )
       : [],
   );
   const nextLevelId = currentOrder.find((id) => !completedIds.has(id));
-  if (nextLevelId !== levelId) {
-    throw new HttpError(403, "La partida no corresponde al siguiente nivel activo");
+  const replayingCompletedLevel = completedIds.has(levelId);
+  if (!replayingCompletedLevel && nextLevelId !== levelId) {
+    throw new HttpError(
+      403,
+      "La partida no corresponde al siguiente nivel activo",
+    );
   }
   completedIds.add(levelId);
   const completedNumbers = new Set(
-    Array.isArray(progress?.fields.nivelesCompletados)
-      ? (progress?.fields.nivelesCompletados as unknown[])
+    Array.isArray(progress?.fields?.nivelesCompletados)
+      ? (progress.fields.nivelesCompletados as unknown[])
         .filter((number): number is number => typeof number === "number")
       : [],
   );
@@ -728,7 +1048,12 @@ async function submitAnswer(
     completedLevelIds: [...completedIds],
     updatedAt: now,
   };
-  const progressPath = userPath(uid, "progress", difficulty as Difficulty);
+  const progressPath = userPath(
+    uid,
+    "progress",
+    difficulty as Difficulty,
+    guest,
+  );
   const writes = [
     updateWrite(
       gamePath,
@@ -740,9 +1065,11 @@ async function submitAnswer(
       },
       game.updateTime!,
     ),
-    progress
-      ? updateWrite(progressPath, progressFields, progress.updateTime!)
-      : createWrite(progressPath, progressFields),
+    ...(replayingCompletedLevel ? [] : [
+      progress
+        ? updateWrite(progressPath, progressFields, progress.updateTime!)
+        : createWrite(progressPath, progressFields),
+    ]),
   ];
   await commitWrites(token, writes);
   return {
@@ -759,7 +1086,9 @@ async function handle(request: Request): Promise<Response> {
     return response(405, { error: "Método no permitido" });
   }
   try {
-    if (!projectId) throw new HttpError(500, "Falta configurar FIREBASE_PROJECT_ID");
+    if (!projectId) {
+      throw new HttpError(500, "Falta configurar FIREBASE_PROJECT_ID");
+    }
     const bearer = request.headers.get("Authorization")
       ?.match(/^Bearer\s+(.+)$/i)?.[1];
     if (!bearer) throw new HttpError(401, "Falta el token de Firebase");
@@ -779,6 +1108,10 @@ async function handle(request: Request): Promise<Response> {
     }
     const uid = verified.payload.sub;
     if (!uid) throw new HttpError(401, "El token no identifica al usuario");
+    const firebaseClaim = verified.payload.firebase;
+    const guest = firebaseClaim !== null &&
+      typeof firebaseClaim === "object" &&
+      (firebaseClaim as JsonObject).sign_in_provider === "anonymous";
     let rawBody: unknown;
     try {
       rawBody = await request.json();
@@ -791,8 +1124,18 @@ async function handle(request: Request): Promise<Response> {
     const body = rawBody as JsonObject;
     const action = body.action;
     const token = await firestoreToken();
+    if (action === "startGuestSession") {
+      if (!guest) {
+        throw new HttpError(
+          403,
+          "Solo una sesión de invitado puede iniciarse",
+        );
+      }
+      await clearGuestSession(token, uid);
+      return response(200, { started: true });
+    }
     if (action === "progress") {
-      return response(200, { estado: await getProgress(token, uid) });
+      return response(200, { estado: await getProgress(token, uid, guest) });
     }
     if (action === "startLevel") {
       if (!validId(body.levelId)) {
@@ -800,7 +1143,25 @@ async function handle(request: Request): Promise<Response> {
       }
       return response(
         200,
-        await startLevel(token, uid, body.levelId),
+        await startLevel(token, uid, body.levelId, guest),
+      );
+    }
+    if (action === "purchaseInstrument") {
+      if (
+        !validId(body.gameId) ||
+        typeof body.instrument !== "string" ||
+        !instrumentTypes.has(body.instrument)
+      ) {
+        throw new HttpError(400, "gameId o instrumento no son válidos");
+      }
+      return response(
+        200,
+        await purchaseInstrument(
+          token,
+          uid,
+          body.gameId,
+          body.instrument,
+        ),
       );
     }
     if (action === "submitAnswer") {
@@ -814,8 +1175,18 @@ async function handle(request: Request): Promise<Response> {
       }
       return response(
         200,
-        await submitAnswer(token, uid, body.gameId, body.answer),
+        await submitAnswer(token, uid, body.gameId, body.answer, guest),
       );
+    }
+    if (action === "endGuestSession") {
+      if (!guest) {
+        throw new HttpError(
+          403,
+          "Solo una sesión de invitado puede finalizarse",
+        );
+      }
+      await clearGuestSession(token, uid);
+      return response(200, { cleared: true });
     }
     throw new HttpError(400, "Acción no válida");
   } catch (error) {

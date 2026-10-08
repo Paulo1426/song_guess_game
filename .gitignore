@@ -37,6 +37,8 @@ migrate_working_dir/
 .env
 .env.*
 !.env.example
+niveles-facil.json
+/scripts/niveles-facil.json
 
 # Symbolication related
 app.*.symbols

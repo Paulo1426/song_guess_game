@@ -7,7 +7,7 @@ class SupabaseNivelRepository {
   final SupabaseClient _client;
 
   SupabaseNivelRepository([SupabaseClient? client])
-      : _client = client ?? Supabase.instance.client;
+    : _client = client ?? Supabase.instance.client;
 
   Future<List<Nivel>> nivelesDe(Dificultad dificultad) async {
     final rows = await _client
@@ -15,7 +15,7 @@ class SupabaseNivelRepository {
         .select('''
           id, numero, dificultad, cancion_id, instrumento_melodia,
           puntos_inicio, canciones!inner(id, titulo),
-          nivel_instrumentos!inner(tipo, precio, audio_path)
+          nivel_instrumentos!inner(tipo, audio_path)
         ''')
         .eq('dificultad', dificultad.id)
         .order('numero');
@@ -24,28 +24,32 @@ class SupabaseNivelRepository {
   }
 
   Future<Nivel> obtener(String nivelId) async {
-    final row = await _client.from('niveles').select('''
+    final row = await _client
+        .from('niveles')
+        .select('''
       id, numero, dificultad, cancion_id, instrumento_melodia,
       puntos_inicio, canciones!inner(id, titulo),
-      nivel_instrumentos!inner(tipo, precio, audio_path)
-    ''').eq('id', nivelId).single();
+      nivel_instrumentos!inner(tipo, audio_path)
+    ''')
+        .eq('id', nivelId)
+        .single();
     return _nivelDesdeRow(row);
   }
 
   Nivel _nivelDesdeRow(Map<String, dynamic> row) {
     final cancion = row['canciones'] as Map<String, dynamic>;
-    final instrumentos = (row['nivel_instrumentos'] as List<dynamic>)
-        .map((item) {
-          final value = item as Map<String, dynamic>;
-          return Instrumento(
-            tipo: TipoInstrumentoExtension.fromId(value['tipo'] as String),
-            precio: (value['precio'] as num).toInt(),
-            audioUrl: _client.storage
-                .from('instrumentos')
-                .getPublicUrl(value['audio_path'] as String),
-          );
-        })
-        .toList();
+    final instrumentos = (row['nivel_instrumentos'] as List<dynamic>).map((
+      item,
+    ) {
+      final value = item as Map<String, dynamic>;
+      return Instrumento(
+        tipo: TipoInstrumentoExtension.fromId(value['tipo'] as String),
+        precio: 0,
+        audioUrl: _client.storage
+            .from('instrumentos')
+            .getPublicUrl(value['audio_path'] as String),
+      );
+    }).toList();
 
     return Nivel(
       id: row['id'] as String,

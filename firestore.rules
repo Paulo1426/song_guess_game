@@ -34,9 +34,7 @@ service cloud.firestore {
     }
 
     match /games/{gameId} {
-      allow get, list: if request.auth != null
-        && resource.data.uid == request.auth.uid;
-      allow create, update, delete: if false;
+      allow read, write: if false;
 
       match /purchases/{instrumentId} {
         allow read: if request.auth != null

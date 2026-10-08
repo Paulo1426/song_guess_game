@@ -25,6 +25,13 @@ class NivelAsignado {
   }
 }
 
+class PartidaIniciada {
+  const PartidaIniciada({required this.gameId, required this.nivel});
+
+  final String gameId;
+  final Nivel nivel;
+}
+
 class ProgresoDificultadRemoto {
   const ProgresoDificultadRemoto({
     required this.dificultad,
@@ -53,11 +60,13 @@ class EstadoJuegoRemoto {
     required this.dificultades,
     required this.dificultadActiva,
     required this.niveles,
+    required this.nivelesRepetibles,
   });
 
   final List<ProgresoDificultadRemoto> dificultades;
   final Dificultad dificultadActiva;
   final List<NivelAsignado> niveles;
+  final List<NivelAsignado> nivelesRepetibles;
 
   factory EstadoJuegoRemoto.fromJson(Map<String, dynamic> json) {
     return EstadoJuegoRemoto(
@@ -73,8 +82,37 @@ class EstadoJuegoRemoto {
       niveles: (json['niveles'] as List<dynamic>)
           .map((item) => NivelAsignado.fromJson(item as Map<String, dynamic>))
           .toList(growable: false),
+      nivelesRepetibles: (json['niveles_repetibles'] as List<dynamic>? ?? [])
+          .map((item) => NivelAsignado.fromJson(item as Map<String, dynamic>))
+          .toList(growable: false),
     );
   }
+}
+
+class ResultadoCompraInstrumento {
+  const ResultadoCompraInstrumento({
+    required this.presupuestoRestante,
+    required this.instrumentosComprados,
+    required this.melodiaDescubierta,
+    required this.compraRealizada,
+    required this.precioInstrumento,
+  });
+
+  final int presupuestoRestante;
+  final List<String> instrumentosComprados;
+  final bool melodiaDescubierta;
+  final bool compraRealizada;
+  final int precioInstrumento;
+
+  factory ResultadoCompraInstrumento.fromJson(Map<String, dynamic> json) =>
+      ResultadoCompraInstrumento(
+        presupuestoRestante: (json['presupuestoRestante'] as num).toInt(),
+        instrumentosComprados: (json['instrumentosComprados'] as List<dynamic>)
+            .cast<String>(),
+        melodiaDescubierta: json['melodiaDescubierta'] as bool,
+        compraRealizada: json['compraRealizada'] as bool,
+        precioInstrumento: (json['precioInstrumento'] as num).toInt(),
+      );
 }
 
 class FirebaseGameRepository {
@@ -102,9 +140,20 @@ class FirebaseGameRepository {
     );
   }
 
-  Future<String> iniciarNivel(String nivelId) async {
+  Future<PartidaIniciada> iniciarNivel(String nivelId) async {
     final response = await _post({'action': 'startLevel', 'levelId': nivelId});
-    return response['gameId'] as String;
+    return PartidaIniciada(
+      gameId: response['gameId'] as String,
+      nivel: Nivel.fromJson(response['nivel'] as Map<String, dynamic>),
+    );
+  }
+
+  Future<void> finalizarSesionInvitado() async {
+    await _post({'action': 'endGuestSession'});
+  }
+
+  Future<void> iniciarSesionInvitado() async {
+    await _post({'action': 'startGuestSession'});
   }
 
   Future<bool> enviarRespuesta({
@@ -119,7 +168,39 @@ class FirebaseGameRepository {
     return response['correct'] as bool;
   }
 
-  Future<Map<String, dynamic>> _post(Map<String, dynamic> body) async {
+  Future<ResultadoCompraInstrumento> comprarInstrumento({
+    required String gameId,
+    required String instrumento,
+  }) async {
+    final response = await _post({
+      'action': 'purchaseInstrument',
+      'gameId': gameId,
+      'instrument': instrumento,
+    });
+    return ResultadoCompraInstrumento.fromJson(response);
+  }
+
+  Future<String> obtenerUrlAudio({
+    required String gameId,
+    required String tipo,
+    String? instrumento,
+  }) async {
+    final response = await _post({
+      'gameId': gameId,
+      'type': tipo,
+      'instrument': instrumento,
+    }, functionName: 'audio-link');
+    final url = response['url'];
+    if (url is! String || url.isEmpty) {
+      throw const FormatException('El servicio no devolvió una URL de audio');
+    }
+    return url;
+  }
+
+  Future<Map<String, dynamic>> _post(
+    Map<String, dynamic> body, {
+    String functionName = 'game-progress',
+  }) async {
     if (_supabaseUrl.isEmpty || _supabaseAnonKey.isEmpty) {
       throw StateError(
         'Configura SUPABASE_URL y SUPABASE_ANON_KEY con --dart-define.',
@@ -137,7 +218,7 @@ class FirebaseGameRepository {
     final response = await _client.post(
       Uri.parse(
         '${_supabaseUrl.replaceAll(RegExp(r'/+$'), '')}'
-        '/functions/v1/game-progress',
+        '/functions/v1/$functionName',
       ),
       headers: {
         'Content-Type': 'application/json',

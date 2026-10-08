@@ -40,11 +40,12 @@ El proyecto combina:
 ## Punto de entrada de la aplicación
 El arranque está en `lib/main.dart`.
 
-- Se inicializa Flutter y Firebase para Android, iOS y Web
+- Se inicializa Flutter y Firebase para Android e iOS
 - Lee `SUPABASE_URL` y `SUPABASE_ANON_KEY` para usar los servicios de Supabase
 - Si ambas variables existen, inicializa el cliente de Supabase
 - La app se ejecuta con `ProviderScope` para permitir Riverpod
-- La vista principal es `HomeScreen`
+- La vista principal es `HomeScreen` en Android e iOS; Firebase Web no esta
+  configurado
 
 ## Configuración y secretos
 La app requiere configuraciones públicas de Firebase generadas en
@@ -93,10 +94,10 @@ El README identifica varios servicios clave:
 La app no separa canciones en tiempo real. Los stems deben prepararse previamente en una herramienta administrativa y luego subirse a Supabase Storage.
 
 Se espera una estructura similar a:
-- `cancion-id/nivel-01/guitarra.mp3`
+- `cancion-id/nivel-01/bateria.mp3`
+- `cancion-id/nivel-01/acordeon.mp3`
 - `cancion-id/nivel-01/bajo.mp3`
-- `cancion-id/nivel-01/piano.mp3`
-- etc.
+- `cancion-id/nivel-01/guitarra.mp3`
 
 Reglas relevantes del README:
 - Cada stem debe arrancar al mismo instante
@@ -148,7 +149,14 @@ La arquitectura mantiene:
 - Modelos de dominio con reglas del juego
 - SQL para almacenamiento y datos del juego
 
-El contexto principal es una experiencia musical con niveles, orden aleatorio
+El contexto principal es una experiencia musical con cuatro stems por nivel
+(Bateria, Acordeon, Bajo y Guitarra), hasta cinco niveles activos por dificultad,
+presupuesto de $1.000.000 y maximo tres instrumentos comprados por partida.
+En cada partida los cuatro instrumentos estan disponibles y se permiten tres
+compras, cuyos precios se asignan al seleccionar y suman exactamente $1.000.000
+($400.000, $300.000 y $300.000). Tras la tercera compra, la melodia se asigna al
+instrumento no comprado el 70% de las veces, y a uno comprado el 30%; si queda
+en uno comprado, se desbloquean los cuatro stems. La progresion conserva orden
 personal y desbloqueo secuencial de dificultades.
 
 ## Observaciones útiles para continuar el trabajo

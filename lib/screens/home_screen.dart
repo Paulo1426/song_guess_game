@@ -1,6 +1,7 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:google_sign_in/google_sign_in.dart';
 
 import '../models/nivel.dart';
 import '../providers/providers.dart';
@@ -55,7 +56,24 @@ class _AuthenticatedHomeState extends ConsumerState<_AuthenticatedHome> {
   @override
   void initState() {
     super.initState();
-    _cargar();
+    if (widget.user.isAnonymous) {
+      _iniciarSesionInvitado();
+    } else {
+      _cargar();
+    }
+  }
+
+  Future<void> _iniciarSesionInvitado() async {
+    try {
+      await ref.read(firebaseGameRepositoryProvider).iniciarSesionInvitado();
+      if (mounted) await _cargar();
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _error = error;
+        _loading = false;
+      });
+    }
   }
 
   Future<void> _cargar() async {
@@ -85,11 +103,12 @@ class _AuthenticatedHomeState extends ConsumerState<_AuthenticatedHome> {
     setState(() => _startingLevelId = nivel.id);
     try {
       final repository = ref.read(firebaseGameRepositoryProvider);
-      final gameId = await repository.iniciarNivel(nivel.id);
+      final partida = await repository.iniciarNivel(nivel.id);
       if (!mounted) return;
       final completada = await Navigator.of(context).push<bool>(
         MaterialPageRoute(
-          builder: (_) => GameScreen(nivel: nivel, gameId: gameId),
+          builder: (_) =>
+              GameScreen(nivel: partida.nivel, gameId: partida.gameId),
         ),
       );
       if (completada == true) await _cargar();
@@ -106,6 +125,12 @@ class _AuthenticatedHomeState extends ConsumerState<_AuthenticatedHome> {
 
   Future<void> _cerrarSesion() async {
     try {
+      if (widget.user.isAnonymous) {
+        await ref
+            .read(firebaseGameRepositoryProvider)
+            .finalizarSesionInvitado();
+        await widget.user.delete();
+      }
       await FirebaseAuth.instance.signOut();
     } catch (error) {
       if (mounted) {
@@ -138,6 +163,7 @@ class _AuthenticatedHomeState extends ConsumerState<_AuthenticatedHome> {
           ? const Center(child: Text('No se pudo cargar el progreso.'))
           : _ContenidoProgreso(
               estado: estado,
+              esInvitado: widget.user.isAnonymous,
               startingLevelId: _startingLevelId,
               onStart: _iniciar,
               onRefresh: _cargar,
@@ -149,15 +175,18 @@ class _AuthenticatedHomeState extends ConsumerState<_AuthenticatedHome> {
 class _ContenidoProgreso extends StatelessWidget {
   const _ContenidoProgreso({
     required this.estado,
+    required this.esInvitado,
     required this.startingLevelId,
     required this.onStart,
     required this.onRefresh,
   });
 
   final EstadoJuegoRemoto estado;
+  final bool esInvitado;
   final String? startingLevelId;
   final ValueChanged<Nivel> onStart;
   final Future<void> Function() onRefresh;
+  bool get _starting => startingLevelId != null;
 
   @override
   Widget build(BuildContext context) {
@@ -167,9 +196,16 @@ class _ContenidoProgreso extends StatelessWidget {
         padding: const EdgeInsets.all(16),
         children: [
           Text(
-            'Completa todos los niveles de una dificultad para desbloquear la siguiente.',
+            'Cada dificultad tiene cinco niveles activos. Completa los cinco para desbloquear la siguiente.',
             style: Theme.of(context).textTheme.bodyLarge,
           ),
+          if (esInvitado) ...[
+            const SizedBox(height: 8),
+            const Text(
+              'Modo invitado: puedes avanzar y completar niveles durante esta sesión. '
+              'El progreso se reinicia cuando cierres y vuelvas a abrir la app.',
+            ),
+          ],
           const SizedBox(height: 16),
           for (final progreso in estado.dificultades)
             Card(
@@ -181,8 +217,9 @@ class _ContenidoProgreso extends StatelessWidget {
                 subtitle: Text(
                   progreso.desbloqueada
                       ? progreso.total == 0
-                          ? 'Aún no hay niveles publicados'
-                          : '${progreso.completados}/${progreso.total} niveles completados'
+                            ? 'Publica 5 niveles para habilitar esta dificultad'
+                            : '${progreso.completados}/${progreso.total} niveles completados'
+                                  '${progreso.total < 5 ? ' · Se requieren 5 niveles publicados para avanzar' : ''}'
                       : 'Completa la dificultad anterior para desbloquearla',
                 ),
                 trailing: progreso.total > 0
@@ -204,7 +241,8 @@ class _ContenidoProgreso extends StatelessWidget {
             const Padding(
               padding: EdgeInsets.symmetric(vertical: 24),
               child: Text(
-                'Todavía no hay niveles publicados para esta dificultad.',
+                'Todavía no hay niveles publicados para esta dificultad. '
+                'Se requieren cinco niveles publicados para completarla.',
                 textAlign: TextAlign.center,
               ),
             ),
@@ -216,7 +254,20 @@ class _ContenidoProgreso extends StatelessWidget {
                   asignado.completado ? 'Completado' : 'Canción por descubrir',
                 ),
                 trailing: asignado.completado
-                    ? const Icon(Icons.check_circle, color: Colors.green)
+                    ? FilledButton.tonal(
+                        onPressed: _starting
+                            ? null
+                            : () => onStart(asignado.nivel),
+                        child: startingLevelId == asignado.nivel.id
+                            ? const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : const Text('Repetir'),
+                      )
                     : asignado.puedeIniciar
                     ? FilledButton(
                         onPressed: startingLevelId == null
@@ -238,14 +289,49 @@ class _ContenidoProgreso extends StatelessWidget {
           if (estado.niveles.isNotEmpty &&
               estado.niveles.every((nivel) => nivel.completado))
             Padding(
-              padding: EdgeInsets.all(16),
+              padding: const EdgeInsets.all(16),
               child: Text(
-                estado.dificultadActiva == Dificultad.avanzado
-                    ? '¡Completaste todos los niveles disponibles!'
-                    : '¡Completaste esta dificultad! Se desbloqueará la siguiente.',
+                estado.dificultades
+                            .firstWhere(
+                              (progreso) =>
+                                  progreso.dificultad ==
+                                  estado.dificultadActiva,
+                            )
+                            .total <
+                        5
+                    ? 'Completaste los niveles publicados. Se necesitan 5 niveles publicados para completar esta dificultad.'
+                    : estado.dificultadActiva == Dificultad.avanzado
+                    ? '¡Completaste los cinco niveles de esta dificultad!'
+                    : '¡Completaste los cinco niveles! Se desbloqueará la siguiente dificultad.',
                 textAlign: TextAlign.center,
               ),
             ),
+          if (estado.nivelesRepetibles.isNotEmpty) ...[
+            const SizedBox(height: 16),
+            Text(
+              'Repetir niveles completados',
+              style: Theme.of(context).textTheme.titleLarge,
+            ),
+            for (final asignado in estado.nivelesRepetibles)
+              Card(
+                child: ListTile(
+                  title: Text(
+                    'Nivel ${asignado.nivel.numero} · ${_nombreDificultad(asignado.nivel.dificultad)}',
+                  ),
+                  subtitle: const Text('Completado'),
+                  trailing: FilledButton.tonal(
+                    onPressed: _starting ? null : () => onStart(asignado.nivel),
+                    child: startingLevelId == asignado.nivel.id
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Text('Repetir'),
+                  ),
+                ),
+              ),
+          ],
         ],
       ),
     );
@@ -300,6 +386,7 @@ class _FirebaseAuthScreenState extends State<FirebaseAuthScreen> {
   bool _registering = false;
   bool _busy = false;
   String? _error;
+  Future<void>? _googleSignInReady;
 
   @override
   void dispose() {
@@ -329,6 +416,53 @@ class _FirebaseAuthScreenState extends State<FirebaseAuthScreen> {
           password: _password.text,
         );
       }
+    } on FirebaseAuthException catch (error) {
+      if (mounted) setState(() => _error = error.message ?? error.code);
+    } catch (error) {
+      if (mounted) setState(() => _error = error.toString());
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _signInWithGoogle() async {
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      await (_googleSignInReady ??= GoogleSignIn.instance.initialize());
+      final account = await GoogleSignIn.instance.authenticate();
+      final idToken = account.authentication.idToken;
+      if (idToken == null || idToken.isEmpty) {
+        throw StateError('Google no devolvió un token de autenticación.');
+      }
+      final credential = GoogleAuthProvider.credential(idToken: idToken);
+      await FirebaseAuth.instance.signInWithCredential(credential);
+    } on FirebaseAuthException catch (error) {
+      if (mounted) setState(() => _error = error.message ?? error.code);
+    } on GoogleSignInException catch (error) {
+      if (mounted) {
+        setState(() {
+          _error = error.code == GoogleSignInExceptionCode.canceled
+              ? 'Se canceló el inicio de sesión con Google.'
+              : error.description ?? error.code.name;
+        });
+      }
+    } catch (error) {
+      if (mounted) setState(() => _error = error.toString());
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _continueAsGuest() async {
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      await FirebaseAuth.instance.signInAnonymously();
     } on FirebaseAuthException catch (error) {
       if (mounted) setState(() => _error = error.message ?? error.code);
     } catch (error) {
@@ -401,6 +535,18 @@ class _FirebaseAuthScreenState extends State<FirebaseAuthScreen> {
                             _registering ? 'Crear cuenta' : 'Iniciar sesión',
                           ),
                   ),
+                  if (!_registering) ...[
+                    const SizedBox(height: 8),
+                    OutlinedButton.icon(
+                      onPressed: _busy ? null : _signInWithGoogle,
+                      icon: const Icon(Icons.account_circle_outlined),
+                      label: const Text('Continuar con Google'),
+                    ),
+                    TextButton(
+                      onPressed: _busy ? null : _continueAsGuest,
+                      child: const Text('Jugar sin registrarme'),
+                    ),
+                  ],
                   TextButton(
                     onPressed: _busy
                         ? null

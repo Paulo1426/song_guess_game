@@ -8,16 +8,17 @@ import 'services/supabase_service.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  if (kIsWeb ||
-      defaultTargetPlatform == TargetPlatform.android ||
-      defaultTargetPlatform == TargetPlatform.iOS) {
+  final firebaseSupported = !kIsWeb &&
+      (defaultTargetPlatform == TargetPlatform.android ||
+          defaultTargetPlatform == TargetPlatform.iOS);
+  if (firebaseSupported) {
     await Firebase.initializeApp(
       options: DefaultFirebaseOptions.currentPlatform,
     );
   } else {
     debugPrint(
-      'Firebase no esta configurado para $defaultTargetPlatform. '
-      'Ejecuta flutterfire configure para agregar esta plataforma.',
+      'Firebase solo esta configurado para Android e iOS; '
+      'plataforma actual: $defaultTargetPlatform.',
     );
   }
 
@@ -26,19 +27,34 @@ Future<void> main() async {
   if (supabaseUrl.isNotEmpty && supabaseKey.isNotEmpty) {
     await SupabaseService.initialize(url: supabaseUrl, anonKey: supabaseKey);
   }
-  runApp(const ProviderScope(child: SongGuessApp()));
+  runApp(
+    ProviderScope(
+      child: SongGuessApp(firebaseSupported: firebaseSupported),
+    ),
+  );
 }
 
 class SongGuessApp extends StatelessWidget {
-  const SongGuessApp({super.key, this.home});
+  const SongGuessApp({super.key, this.home, this.firebaseSupported = true});
 
   final Widget? home;
+  final bool firebaseSupported;
 
   @override
   Widget build(BuildContext context) => MaterialApp(
     title: 'Adivina la canción',
     debugShowCheckedModeBanner: false,
     theme: ThemeData.dark(useMaterial3: true),
-    home: home ?? const HomeScreen(),
+    home: home ??
+        (firebaseSupported
+            ? const HomeScreen()
+            : const Scaffold(
+                body: Center(
+                  child: Text(
+                    'Firebase solo está configurado para Android e iOS.',
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+              )),
   );
 }
