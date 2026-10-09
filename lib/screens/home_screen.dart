@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -6,6 +8,7 @@ import 'package:google_sign_in/google_sign_in.dart';
 import '../models/nivel.dart';
 import '../providers/providers.dart';
 import '../services/firebase_game_repository.dart';
+import '../services/offline_game_store.dart';
 import 'game_screen.dart';
 
 class HomeScreen extends ConsumerWidget {
@@ -51,7 +54,10 @@ class _AuthenticatedHomeState extends ConsumerState<_AuthenticatedHome> {
   EstadoJuegoRemoto? _estado;
   Object? _error;
   bool _loading = true;
+  bool _offlineMode = false;
   String? _startingLevelId;
+  final _offlineStore = OfflineGameStore();
+  OfflineGameSnapshot? _offlineSnapshot;
 
   @override
   void initState() {
@@ -69,10 +75,7 @@ class _AuthenticatedHomeState extends ConsumerState<_AuthenticatedHome> {
       if (mounted) await _cargar();
     } catch (error) {
       if (!mounted) return;
-      setState(() {
-        _error = error;
-        _loading = false;
-      });
+      await _loadOfflineSnapshot(error);
     }
   }
 
@@ -82,13 +85,87 @@ class _AuthenticatedHomeState extends ConsumerState<_AuthenticatedHome> {
       _error = null;
     });
     try {
-      final estado = await ref
-          .read(firebaseGameRepositoryProvider)
-          .cargarEstado();
+      OfflineGameSnapshot? snapshot;
+      try {
+        snapshot = await _offlineStore.load(widget.user.uid);
+      } on FormatException catch (error) {
+        debugPrint('La copia offline está dañada: $error');
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'La copia local de progreso no se pudo leer; se intentará recuperar desde internet.',
+              ),
+            ),
+          );
+        }
+      } on FileSystemException catch (error) {
+        debugPrint('No se pudo leer la copia offline: $error');
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'No se pudo leer el almacenamiento local; se intentará cargar desde internet.',
+              ),
+            ),
+          );
+        }
+      }
+      if (snapshot != null) {
+        await _syncPendingCompletions(snapshot);
+      }
+      final repository = ref.read(firebaseGameRepositoryProvider);
+      final estado = await repository.cargarEstado();
       if (!mounted) return;
       setState(() {
         _estado = estado;
+        _offlineMode = false;
         _loading = false;
+      });
+      try {
+        final bundle = await repository.descargarPaqueteOffline();
+        final refreshed = await _cacheOfflineBundle(
+          bundle,
+          widget.user.uid,
+          widget.user.isAnonymous,
+        );
+        if (!mounted) return;
+        setState(() => _offlineSnapshot = refreshed);
+      } catch (error) {
+        debugPrint('No se pudo actualizar el paquete offline: $error');
+        if (snapshot == null && mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'No se pudieron descargar todos los niveles para usarlos sin conexión.',
+              ),
+            ),
+          );
+        }
+      }
+    } catch (error) {
+      if (!mounted) return;
+      await _loadOfflineSnapshot(error);
+    }
+  }
+
+  Future<void> _loadOfflineSnapshot(Object onlineError) async {
+    try {
+      final snapshot = await _offlineStore.load(widget.user.uid);
+      if (!mounted) return;
+      if (snapshot == null) {
+        setState(() {
+          _error = onlineError;
+          _loading = false;
+        });
+        return;
+      }
+      setState(() {
+        _offlineSnapshot = snapshot;
+        _estado = snapshot.estado;
+        _offlineMode = true;
+        _loading = false;
+        _error = null;
       });
     } catch (error) {
       if (!mounted) return;
@@ -99,24 +176,130 @@ class _AuthenticatedHomeState extends ConsumerState<_AuthenticatedHome> {
     }
   }
 
+  Future<OfflineGameSnapshot> _cacheOfflineBundle(
+    Map<String, dynamic> bundle,
+    String uid,
+    bool guest,
+  ) async {
+    final state = Map<String, dynamic>.from(bundle['estado'] as Map);
+    final rawLevels = bundle['levels'] as List<dynamic>;
+    final audioService = ref.read(audioServiceProvider);
+    final levels = await Future.wait(
+      rawLevels.map((rawLevel) async {
+        final data = Map<String, dynamic>.from(rawLevel as Map);
+        final entry = Map<String, dynamic>.from(data['entry'] as Map);
+        final nivelJson = Map<String, dynamic>.from(entry['nivel'] as Map);
+        final nivel = Nivel.fromJson(nivelJson);
+        final urls = Map<String, dynamic>.from(data['audioUrls'] as Map);
+        final paths = <String, String>{};
+        for (final instrument in nivel.instrumentos) {
+          final url = urls[instrument.id];
+          if (url is! String || url.isEmpty) {
+            throw FormatException(
+              'Falta el enlace offline del instrumento ${instrument.id} en ${nivel.id}',
+            );
+          }
+          final key = 'level:${nivel.id}:stem:${instrument.id}';
+          final file = await audioService.descargarYGuardar(url, key);
+          paths[instrument.id] = file.path;
+        }
+        final instrumentalUrl = data['instrumentalAudioUrl'];
+        if (instrumentalUrl is! String || instrumentalUrl.isEmpty) {
+          throw FormatException(
+            'Falta el enlace offline de la pista instrumental de ${nivel.id}',
+          );
+        }
+        final instrumentalFile = await audioService.descargarYGuardar(
+          instrumentalUrl,
+          'song:${nivel.cancionId}:instrumentalSong',
+        );
+        return OfflineLevelData(
+          nivel: nivel,
+          completado: entry['completado'] as bool? ?? false,
+          puedeIniciar: entry['puede_iniciar'] as bool? ?? false,
+          respuesta: data['respuesta'] as String,
+          audioPaths: paths,
+          instrumentalAudioPath: instrumentalFile.path,
+        );
+      }),
+    );
+    final snapshot = OfflineGameSnapshot(
+      uid: uid,
+      guest: guest,
+      stateJson: state,
+      levels: levels,
+      pendingCompletions: _offlineSnapshot?.uid == uid
+          ? _offlineSnapshot!.pendingCompletions
+          : const [],
+    );
+    await _offlineStore.save(snapshot);
+    return snapshot;
+  }
+
+  Future<void> _syncPendingCompletions(OfflineGameSnapshot snapshot) async {
+    var current = snapshot;
+    final repository = ref.read(firebaseGameRepositoryProvider);
+    for (final completion in snapshot.pendingCompletions) {
+      final levelId = completion['levelId'];
+      final answer = completion['answer'];
+      if (levelId == null || answer == null) {
+        throw const FormatException('Hay un progreso offline incompleto');
+      }
+      await repository.sincronizarNivelOffline(
+        levelId: levelId,
+        respuesta: answer,
+      );
+      current = current.withoutPendingCompletion(levelId);
+      await _offlineStore.save(current);
+    }
+    _offlineSnapshot = current;
+  }
+
   Future<bool> _iniciar(Nivel nivel, {int? numeroVisible}) async {
     if (_startingLevelId != null) return false;
     setState(() => _startingLevelId = nivel.id);
     try {
-      final repository = ref.read(firebaseGameRepositoryProvider);
-      final partida = await repository.iniciarNivel(nivel.id);
-      if (!mounted) return false;
-      final completada = await Navigator.of(context).push<bool>(
-        MaterialPageRoute(
-          builder: (_) => GameScreen(
-            nivel: partida.nivel,
-            gameId: partida.gameId,
-            numeroVisible: numeroVisible,
-          ),
-        ),
-      );
-      if (completada == true) await _cargar();
-      return completada == true;
+      OfflineLevelData? offlineLevel;
+      for (final cachedLevel
+          in _offlineSnapshot?.levels ?? const <OfflineLevelData>[]) {
+        if (cachedLevel.nivel.id == nivel.id) {
+          offlineLevel = cachedLevel;
+          break;
+        }
+      }
+      if (_offlineMode) {
+        if (offlineLevel == null) {
+          throw StateError('Este nivel no está descargado para jugar offline');
+        }
+        return await _pushGame(
+          nivel: offlineLevel.nivel,
+          gameId: 'offline-${DateTime.now().microsecondsSinceEpoch}',
+          numeroVisible: numeroVisible,
+          offlineLevel: offlineLevel,
+        );
+      }
+      try {
+        final partida = await ref
+            .read(firebaseGameRepositoryProvider)
+            .iniciarNivel(nivel.id);
+        return await _pushGame(
+          nivel: partida.nivel,
+          gameId: partida.gameId,
+          numeroVisible: numeroVisible,
+          offlineLevel: offlineLevel,
+        );
+      } catch (error) {
+        if (offlineLevel == null) rethrow;
+        debugPrint(
+          'No se pudo iniciar online; usando nivel descargado: $error',
+        );
+        return await _pushGame(
+          nivel: offlineLevel.nivel,
+          gameId: 'offline-${DateTime.now().microsecondsSinceEpoch}',
+          numeroVisible: numeroVisible,
+          offlineLevel: offlineLevel,
+        );
+      }
     } catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -129,6 +312,37 @@ class _AuthenticatedHomeState extends ConsumerState<_AuthenticatedHome> {
     }
   }
 
+  Future<bool> _pushGame({
+    required Nivel nivel,
+    required String gameId,
+    required int? numeroVisible,
+    required OfflineLevelData? offlineLevel,
+  }) async {
+    if (!mounted) return false;
+    final completed = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(
+        builder: (_) => GameScreen(
+          nivel: nivel,
+          gameId: gameId,
+          numeroVisible: numeroVisible,
+          offlineLevel: offlineLevel,
+          offlineMode: _offlineMode || gameId.startsWith('offline-'),
+          onOfflineCompleted: (levelId, answer) async {
+            final snapshot = _offlineSnapshot;
+            if (snapshot == null) {
+              throw StateError('No existe progreso offline para sincronizar');
+            }
+            final updated = snapshot.completedLocally(levelId, answer);
+            await _offlineStore.save(updated);
+            _offlineSnapshot = updated;
+          },
+        ),
+      ),
+    );
+    if (completed == true) await _cargar();
+    return completed == true;
+  }
+
   Future<void> _abrirDificultad(Dificultad dificultad) async {
     final estado = _estado;
     if (estado == null) return;
@@ -136,11 +350,23 @@ class _AuthenticatedHomeState extends ConsumerState<_AuthenticatedHome> {
       (item) => item.dificultad == dificultad,
     );
     final esDificultadActiva = estado.dificultadActiva == dificultad;
-    final niveles = esDificultadActiva
+    final nivelesRemotos = esDificultadActiva
         ? estado.niveles
         : estado.nivelesRepetibles
               .where((item) => item.nivel.dificultad == dificultad)
               .toList(growable: false);
+    final niveles = _offlineMode && _offlineSnapshot != null
+        ? _offlineSnapshot!.levels
+              .where((item) => item.nivel.dificultad == dificultad)
+              .map(
+                (item) => NivelAsignado(
+                  nivel: item.nivel,
+                  completado: item.completado,
+                  puedeIniciar: item.puedeIniciar,
+                ),
+              )
+              .toList(growable: false)
+        : nivelesRemotos;
 
     await Navigator.of(context).push<void>(
       MaterialPageRoute(
@@ -203,6 +429,7 @@ class _AuthenticatedHomeState extends ConsumerState<_AuthenticatedHome> {
           : _ContenidoProgreso(
               estado: estado,
               esInvitado: widget.user.isAnonymous,
+              offlineMode: _offlineMode,
               onOpenDifficulty: _abrirDificultad,
               onRefresh: _cargar,
             ),
@@ -214,12 +441,14 @@ class _ContenidoProgreso extends StatelessWidget {
   const _ContenidoProgreso({
     required this.estado,
     required this.esInvitado,
+    required this.offlineMode,
     required this.onOpenDifficulty,
     required this.onRefresh,
   });
 
   final EstadoJuegoRemoto estado;
   final bool esInvitado;
+  final bool offlineMode;
   final ValueChanged<Dificultad> onOpenDifficulty;
   final Future<void> Function() onRefresh;
 
@@ -237,8 +466,15 @@ class _ContenidoProgreso extends StatelessWidget {
           if (esInvitado) ...[
             const SizedBox(height: 8),
             const Text(
-              'Modo invitado: puedes avanzar y completar niveles durante esta sesión. '
-              'El progreso se reinicia cuando cierres y vuelvas a abrir la app.',
+              'Modo invitado: el progreso se guarda en este dispositivo y se sincroniza '
+              'cuando vuelvas a conectarte.',
+            ),
+          ],
+          if (offlineMode) ...[
+            const SizedBox(height: 8),
+            const Text(
+              'Sin conexión: estás jugando con los niveles descargados. '
+              'El progreso se sincronizará cuando vuelvas a conectarte.',
             ),
           ],
           const SizedBox(height: 16),

@@ -469,10 +469,11 @@ Para habilitar Google Sign-In en Android:
 5. Descarga el nuevo `google-services.json` y reemplaza
    `android/app/google-services.json`. Debe incluir un cliente OAuth web.
 
-Los audios se descargan a la cache privada del dispositivo al escucharlos por
-primera vez. Se pueden reutilizar sin red mientras el archivo siga en cache,
-pero iniciar sesion, cargar niveles, comprar, validar respuestas y obtener por
-primera vez un enlace de audio requieren internet.
+Al cargar el paquete offline con conexión, la app descarga a su almacenamiento
+privado los stems y la mezcla instrumental completa de los niveles disponibles.
+La mezcla instrumental se puede usar sin conexión como pista para adivinar; la
+grabación original con voz nunca se guarda en caché y requiere internet. Iniciar
+sesión y descargar o sincronizar progreso también requiere conexión.
 
 Si los registros de `game-progress` muestran `Firestore ... failed 403`, confirma
 que la API de Cloud Firestore este habilitada en el proyecto Firebase y que la

@@ -727,6 +727,124 @@ async function getProgress(
   };
 }
 
+async function createOfflineAudioUrl(
+  path: string,
+  bucket = Deno.env.get("SUPABASE_STEMS_BUCKET") ?? "instrumentos",
+): Promise<string> {
+  const supabaseUrl = requiredEnv("SUPABASE_URL").replace(/\/+$/, "");
+  const serviceRoleKey = requiredEnv("SUPABASE_SERVICE_ROLE_KEY");
+  const objectPath = path.split("/").map(encodeURIComponent).join("/");
+  const result = await fetch(
+    `${supabaseUrl}/storage/v1/object/sign/${
+      encodeURIComponent(bucket)
+    }/${objectPath}`,
+    {
+      method: "POST",
+      headers: {
+        apikey: serviceRoleKey,
+        Authorization: `Bearer ${serviceRoleKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ expiresIn: 604800 }),
+    },
+  );
+  if (!result.ok) {
+    const details = (await result.text()).slice(0, 1000);
+    console.error("Offline audio URL signing failed", result.status, details);
+    throw new HttpError(502, "No se pudo preparar la descarga offline de audio");
+  }
+  const data = await result.json() as {
+    signedURL?: string;
+    signedUrl?: string;
+  };
+  const signedUrl = data.signedURL ?? data.signedUrl;
+  if (!signedUrl) {
+    throw new HttpError(502, "Storage no devolvió la URL de descarga");
+  }
+  if (/^https?:\/\//i.test(signedUrl)) return signedUrl;
+  const pathWithPrefix = signedUrl.startsWith("/storage/v1/")
+    ? signedUrl
+    : `/storage/v1${signedUrl.startsWith("/") ? signedUrl : `/${signedUrl}`}`;
+  return `${supabaseUrl}${pathWithPrefix}`;
+}
+
+async function createOfflineBundle(
+  token: string,
+  uid: string,
+  guest: boolean,
+): Promise<JsonObject> {
+  const state = await getProgress(token, uid, guest);
+  const entries = [
+    ...(state.niveles as JsonObject[]),
+    ...(state.niveles_repetibles as JsonObject[]),
+  ];
+  const eligible = [...new Map(
+    entries
+      .filter((entry) => {
+        const nivel = entry.nivel as JsonObject;
+        return !guest || nivel.dificultad === "facil";
+      })
+      .map((entry) => {
+        const nivel = entry.nivel as JsonObject;
+        return [nivel.id as string, entry] as const;
+      }),
+  ).values()];
+
+  const levels = await Promise.all(eligible.map(async (entry) => {
+    const nivel = entry.nivel as JsonObject;
+    const levelId = nivel.id as string;
+    const [level, answer] = await Promise.all([
+      getDocument(token, `levels/${levelId}`),
+      getDocument(token, `privateLevelAnswers/${levelId}`),
+    ]);
+    if (!level || !answer || answer.fields.respuestaCancionNormalizada === undefined) {
+      throw new HttpError(404, `Faltan datos offline para ${levelId}`);
+    }
+    const instruments = level.fields.instrumentos;
+    if (!instruments || typeof instruments !== "object") {
+      throw new HttpError(500, `El nivel ${levelId} no tiene instrumentos`);
+    }
+    const songId = nivel.cancion_id;
+    if (typeof songId !== "string" || !validId(songId)) {
+      throw new HttpError(500, `El nivel ${levelId} no tiene una canción válida`);
+    }
+    const song = await getDocument(token, `songs/${songId}`);
+    const instrumentalPath = song?.fields.instrumentalAudioPath;
+    if (
+      !song ||
+      song.fields.published !== true ||
+      typeof instrumentalPath !== "string" ||
+      !instrumentalPath
+    ) {
+      throw new HttpError(404, `Falta la pista instrumental de ${levelId}`);
+    }
+    const audioUrls: JsonObject = {};
+    for (const [instrument, value] of Object.entries(instruments as JsonObject)) {
+      if (!instrumentTypes.has(instrument) || !value || typeof value !== "object") {
+        throw new HttpError(500, `Instrumentos inválidos en ${levelId}`);
+      }
+      const storagePath = (value as JsonObject).storagePath;
+      if (typeof storagePath !== "string" || !storagePath) {
+        throw new HttpError(500, `Falta la ruta del instrumento ${instrument}`);
+      }
+      audioUrls[instrument] = await createOfflineAudioUrl(storagePath);
+    }
+    const instrumentalBucket =
+      Deno.env.get("SUPABASE_INSTRUMENTAL_SONGS_BUCKET") ??
+        "canciones-instrumentales";
+    return {
+      entry,
+      respuesta: answer.fields.respuestaCancionNormalizada,
+      audioUrls,
+      instrumentalAudioUrl: await createOfflineAudioUrl(
+        instrumentalPath,
+        instrumentalBucket,
+      ),
+    };
+  }));
+  return { estado: state, levels };
+}
+
 async function purchaseInstrument(
   token: string,
   uid: string,
@@ -1136,6 +1254,38 @@ async function handle(request: Request): Promise<Response> {
     }
     if (action === "progress") {
       return response(200, { estado: await getProgress(token, uid, guest) });
+    }
+    if (action === "offlineBundle") {
+      return response(
+        200,
+        { bundle: await createOfflineBundle(token, uid, guest) },
+      );
+    }
+    if (action === "completeOfflineLevel") {
+      if (
+        !validId(body.levelId) ||
+        typeof body.answer !== "string" ||
+        body.answer.trim().length === 0 ||
+        body.answer.length > 200
+      ) {
+        throw new HttpError(400, "levelId o respuesta no son válidos");
+      }
+      const started = await startLevel(token, uid, body.levelId, guest);
+      const gameId = started.gameId;
+      if (typeof gameId !== "string") {
+        throw new HttpError(500, "No se pudo crear la partida offline");
+      }
+      const result = await submitAnswer(
+        token,
+        uid,
+        gameId,
+        body.answer,
+        guest,
+      );
+      if (result.correct !== true) {
+        throw new HttpError(400, "La respuesta offline no coincide");
+      }
+      return response(200, result);
     }
     if (action === "startLevel") {
       if (!validId(body.levelId)) {

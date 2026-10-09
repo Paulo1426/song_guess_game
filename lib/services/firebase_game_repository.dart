@@ -140,6 +140,26 @@ class FirebaseGameRepository {
     );
   }
 
+  Future<Map<String, dynamic>> descargarPaqueteOffline() async {
+    final response = await _post({'action': 'offlineBundle'});
+    final bundle = response['bundle'];
+    if (bundle is! Map<String, dynamic>) {
+      throw const FormatException('El servicio no devolvió el paquete offline');
+    }
+    return bundle;
+  }
+
+  Future<void> sincronizarNivelOffline({
+    required String levelId,
+    required String respuesta,
+  }) async {
+    await _post({
+      'action': 'completeOfflineLevel',
+      'levelId': levelId,
+      'answer': respuesta,
+    });
+  }
+
   Future<PartidaIniciada> iniciarNivel(String nivelId) async {
     final response = await _post({'action': 'startLevel', 'levelId': nivelId});
     return PartidaIniciada(

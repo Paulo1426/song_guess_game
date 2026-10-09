@@ -22,6 +22,9 @@ class AudioService {
     return await file.exists() ? file : null;
   }
 
+  Future<File> descargarYGuardar(String url, String key) =>
+      _ensureCached(url, key);
+
   Future<void> reproducir({
     required List<String> urls,
     List<String?>? cacheKeys,
