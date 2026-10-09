@@ -4,6 +4,26 @@ import { createSign } from "node:crypto";
 import { pathToFileURL } from "node:url";
 
 const instruments = ["acordeon", "bajo", "bateria", "guitarra"];
+const difficultyConfigs = [
+  {
+    prefix: "facil",
+    firestoreDifficulty: "facil",
+    label: "Fácil",
+    firstSongNumber: 1,
+  },
+  {
+    prefix: "media",
+    firestoreDifficulty: "medio",
+    label: "Media",
+    firstSongNumber: 6,
+  },
+  {
+    prefix: "dificil",
+    firestoreDifficulty: "avanzado",
+    label: "Avanzada",
+    firstSongNumber: 11,
+  },
+];
 const scope = "https://www.googleapis.com/auth/datastore";
 const firestoreApi = "https://firestore.googleapis.com/v1";
 
@@ -37,9 +57,10 @@ function encodeFields(fields) {
   );
 }
 
-function validateLevel(level, expectedNumber) {
-  const id = `facil-${String(expectedNumber).padStart(2, "0")}`;
-  const songId = `cancion-${String(expectedNumber).padStart(3, "0")}`;
+function validateLevel(level, expectedNumber, config) {
+  const id = `${config.prefix}-${String(expectedNumber).padStart(2, "0")}`;
+  const songNumber = config.firstSongNumber + expectedNumber - 1;
+  const songId = `cancion-${String(songNumber).padStart(3, "0")}`;
   if (
     level.numero !== expectedNumber ||
     level.levelId !== id ||
@@ -149,14 +170,30 @@ async function main() {
   const args = process.argv.slice(2);
   const apply = args.includes("--apply");
   const fileArgument = args.find((arg) => !arg.startsWith("--"));
-  const dataPath = resolve(
-    fileArgument ?? "scripts/niveles-facil.json",
-  );
+  const dataPath = resolve(fileArgument ?? "niveles-facil.json");
   const data = await readJson(dataPath);
   if (!Array.isArray(data.levels) || data.levels.length !== 5) {
-    throw new Error("El JSON debe contener exactamente los cinco niveles fáciles.");
+    throw new Error("El JSON debe contener exactamente cinco niveles.");
   }
-  data.levels.forEach((level, index) => validateLevel(level, index + 1));
+  const firstLevelId = data.levels[0]?.levelId;
+  const config = difficultyConfigs.find((item) =>
+    typeof firstLevelId === "string" &&
+    firstLevelId.startsWith(`${item.prefix}-`)
+  );
+  if (!config) {
+    throw new Error(
+      "Los levelId deben comenzar por facil-, media- o dificil-.",
+    );
+  }
+  data.levels.forEach((level, index) =>
+    validateLevel(level, index + 1, config)
+  );
+  if (
+    new Set(data.levels.map((level) => level.levelId)).size !== 5 ||
+    new Set(data.levels.map((level) => level.songId)).size !== 5
+  ) {
+    throw new Error("Los levelId y songId deben ser únicos.");
+  }
 
   const writes = [];
   for (const level of data.levels) {
@@ -170,7 +207,7 @@ async function main() {
       }),
       updateWrite("song-gues-game", "levels", level.levelId, {
         numero: level.numero,
-        dificultad: "facil",
+        dificultad: config.firestoreDifficulty,
         cancionId: level.songId,
         published: true,
         modoPrueba: false,
@@ -185,7 +222,7 @@ async function main() {
   }
 
   console.log(
-    `${apply ? "Se escribirán" : "Vista previa; no se modificará Firestore:"} ${writes.length} documentos.`,
+    `${apply ? "Se escribirán" : "Vista previa; no se modificará Firestore:"} ${writes.length} documentos para dificultad ${config.label}.`,
   );
   for (const level of data.levels) {
     console.log(
@@ -236,7 +273,9 @@ async function main() {
       `Firestore rechazó la carga (${response.status}): ${details}`,
     );
   }
-  console.log("Carga terminada: 5 canciones, 5 niveles y 5 respuestas privadas.");
+  console.log(
+    `Carga terminada: 5 canciones, 5 niveles de dificultad ${config.label} y 5 respuestas privadas.`,
+  );
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {

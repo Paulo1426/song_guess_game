@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:audio_session/audio_session.dart';
 import 'package:crypto/crypto.dart';
 import 'package:http/http.dart' as http;
 import 'package:just_audio/just_audio.dart';
@@ -38,6 +39,8 @@ class AudioService {
     if (playbackGeneration != _playbackGeneration) return;
     final cancellation = Completer<void>();
     _cancelPlayback = cancellation;
+    AudioSession? audioSession;
+    var audioSessionActive = false;
     try {
       for (final url in urls) {
         if (!identical(_cancelPlayback, cancellation)) return;
@@ -60,6 +63,13 @@ class AudioService {
         await player.seek(inicio);
       }
       if (!identical(_cancelPlayback, cancellation)) return;
+      audioSession = await AudioSession.instance;
+      await audioSession.configure(const AudioSessionConfiguration.music());
+      audioSessionActive = await audioSession.setActive(true);
+      if (!audioSessionActive) {
+        throw StateError('El sistema no permitió activar la sesión de audio');
+      }
+      if (!identical(_cancelPlayback, cancellation)) return;
       _reproduciendo = true;
       final playback = Future.wait(
         _players.map((player) => player.play()),
@@ -72,6 +82,9 @@ class AudioService {
     } finally {
       if (identical(_cancelPlayback, cancellation)) {
         await detener();
+      }
+      if (audioSessionActive) {
+        await audioSession!.setActive(false);
       }
     }
   }

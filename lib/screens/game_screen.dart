@@ -34,7 +34,6 @@ class _GameScreenState extends ConsumerState<GameScreen> {
   bool? _correct;
   int _balance = Nivel.presupuestoTotal;
   final Set<String> _purchased = {};
-  final Map<String, int> _revealedPrices = {};
   bool _melodyFound = false;
   bool _won = false;
   int _playbackGeneration = 0;
@@ -88,24 +87,33 @@ class _GameScreenState extends ConsumerState<GameScreen> {
         instrumento: instrumento.id,
       );
       if (!mounted) return;
+      final purchasePrice =
+          'Instrumento comprado por \$${_formatPriceInThousands(result.precioInstrumento)}K.';
       setState(() {
         _balance = result.presupuestoRestante;
         _purchased
           ..clear()
           ..addAll(result.instrumentosComprados);
-        _revealedPrices[instrumento.id] = result.precioInstrumento;
         _melodyFound = result.melodiaDescubierta;
-        if (_melodyFound) {
-          _message =
-              '¡Encontraste la melodía! Se desbloquearon todos los instrumentos.';
-        } else if (result.compraRealizada) {
-          _message = 'Instrumento comprado.';
-        }
+        _message = result.melodiaDescubierta
+            ? '¡Encontraste la melodía! Se desbloquearon todos los instrumentos. '
+                  '$purchasePrice'
+            : result.compraRealizada
+            ? purchasePrice
+            : null;
       });
-      await _playStems([instrumento]);
+      try {
+        await _playStems([instrumento]);
+      } catch (error) {
+        if (!mounted) return;
+        setState(
+          () => _message =
+              '$purchasePrice No se pudo reproducir el instrumento: $error',
+        );
+      }
     } catch (error) {
       if (mounted) {
-        setState(() => _message = 'No se pudo comprar o reproducir: $error');
+        setState(() => _message = 'No se pudo comprar el instrumento: $error');
       }
     } finally {
       if (mounted) setState(() => _buying = false);
@@ -374,3 +382,5 @@ class _GameScreenState extends ConsumerState<GameScreen> {
     ),
   );
 }
+
+String _formatPriceInThousands(int price) => (price ~/ 1000).toString();

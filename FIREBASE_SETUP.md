@@ -275,14 +275,14 @@ solo fragmento no hace falta una subcarpeta `fragmento-00` ni crear documentos
 en `fragments`. Verifica que el uso de mayúsculas coincida exactamente: por
 ejemplo, `guitarra.MP3` y `guitarra.mp3` son rutas distintas.
 
-Para evitar crear los 15 documentos a mano, puedes usar
-`scripts/cargar_niveles_firestore.mjs`. Copia
-`scripts/niveles-facil.example.json` a `scripts/niveles-facil.json` y completa
-para cada canción el título, artista, respuesta y las rutas exactas de las dos
-mezclas. Usa los nombres completos que aparecen en Supabase; las rutas distinguen
-mayúsculas, minúsculas y guiones bajos. El script normaliza la respuesta y genera
-las rutas de los cuatro stems con el patrón
-`{songId}/nivel-{numero}/`.
+Para cargar niveles usa `scripts/cargar_niveles_firestore.mjs` con un JSON de
+cinco niveles. El script acepta `niveles-facil.json`, `niveles-media.json` y
+`niveles-dificil.json`, valida que sus IDs y canciones correspondan a la
+dificultad y genera las rutas de los cuatro stems con el patrón
+`{songId}/nivel-{numero}/`. Completa para cada canción el título, artista,
+respuesta y las rutas exactas de las dos mezclas. Usa los nombres completos que
+aparecen en Supabase; las rutas distinguen mayúsculas, minúsculas y guiones bajos.
+El script normaliza las respuestas antes de guardarlas.
 
 La estructura esperada en Supabase es:
 
@@ -302,11 +302,20 @@ que las cuatro pistas de cada canción correspondan a la misma canción y al mis
 fragmento.
 
 El script primero hace una vista previa y no escribe nada. Para autorizar la
-carga, ejecuta con `--apply`. Usa una cuenta de servicio local del proyecto
+carga, ejecuta con `--apply` y el JSON deseado. Por ejemplo:
+
+```powershell
+$env:GOOGLE_APPLICATION_CREDENTIALS = "C:\ruta-segura\firebase-service-account.json"
+node scripts\cargar_niveles_firestore.mjs .\niveles-media.json
+node scripts\cargar_niveles_firestore.mjs .\niveles-media.json --apply
+```
+
+Para Fácil o Avanzada, reemplaza el nombre del archivo por
+`niveles-facil.json` o `niveles-dificil.json`. Usa una cuenta de servicio local del proyecto
 `song-gues-game` con permiso de escritura en Firestore; guarda el archivo de
 credenciales fuera del repositorio y define `GOOGLE_APPLICATION_CREDENTIALS`
 con su ruta. Nunca subas ni compartas ese archivo. El JSON real
-`scripts/niveles-facil.json` está excluido de Git porque contiene las respuestas.
+`niveles-facil.json` y las respuestas no deben subirse al repositorio.
 La carga actualiza solo los campos indicados de `songs`, `levels` y
 `privateLevelAnswers`; no borra otros campos ni subcolecciones existentes.
 Los archivos de audio deben estar ya subidos a los buckets de Supabase: este

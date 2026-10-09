@@ -99,12 +99,13 @@ class _AuthenticatedHomeState extends ConsumerState<_AuthenticatedHome> {
     }
   }
 
-  Future<void> _iniciar(Nivel nivel, {int? numeroVisible}) async {
+  Future<bool> _iniciar(Nivel nivel, {int? numeroVisible}) async {
+    if (_startingLevelId != null) return false;
     setState(() => _startingLevelId = nivel.id);
     try {
       final repository = ref.read(firebaseGameRepositoryProvider);
       final partida = await repository.iniciarNivel(nivel.id);
-      if (!mounted) return;
+      if (!mounted) return false;
       final completada = await Navigator.of(context).push<bool>(
         MaterialPageRoute(
           builder: (_) => GameScreen(
@@ -115,15 +116,50 @@ class _AuthenticatedHomeState extends ConsumerState<_AuthenticatedHome> {
         ),
       );
       if (completada == true) await _cargar();
+      return completada == true;
     } catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('No se pudo iniciar el nivel: $error')),
         );
       }
+      return false;
     } finally {
       if (mounted) setState(() => _startingLevelId = null);
     }
+  }
+
+  Future<void> _abrirDificultad(Dificultad dificultad) async {
+    final estado = _estado;
+    if (estado == null) return;
+    final progreso = estado.dificultades.firstWhere(
+      (item) => item.dificultad == dificultad,
+    );
+    final esDificultadActiva = estado.dificultadActiva == dificultad;
+    final niveles = esDificultadActiva
+        ? estado.niveles
+        : estado.nivelesRepetibles
+              .where((item) => item.nivel.dificultad == dificultad)
+              .toList(growable: false);
+
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => _DifficultyLevelsScreen(
+          dificultad: dificultad,
+          progreso: progreso,
+          niveles: niveles,
+          onStart: (nivel, numeroVisible) async {
+            final completado = await _iniciar(
+              nivel,
+              numeroVisible: numeroVisible,
+            );
+            if (completado && mounted) {
+              Navigator.of(context).pop();
+            }
+          },
+        ),
+      ),
+    );
   }
 
   Future<void> _cerrarSesion() async {
@@ -167,8 +203,7 @@ class _AuthenticatedHomeState extends ConsumerState<_AuthenticatedHome> {
           : _ContenidoProgreso(
               estado: estado,
               esInvitado: widget.user.isAnonymous,
-              startingLevelId: _startingLevelId,
-              onStart: _iniciar,
+              onOpenDifficulty: _abrirDificultad,
               onRefresh: _cargar,
             ),
     );
@@ -179,17 +214,14 @@ class _ContenidoProgreso extends StatelessWidget {
   const _ContenidoProgreso({
     required this.estado,
     required this.esInvitado,
-    required this.startingLevelId,
-    required this.onStart,
+    required this.onOpenDifficulty,
     required this.onRefresh,
   });
 
   final EstadoJuegoRemoto estado;
   final bool esInvitado;
-  final String? startingLevelId;
-  final void Function(Nivel nivel, {int? numeroVisible}) onStart;
+  final ValueChanged<Dificultad> onOpenDifficulty;
   final Future<void> Function() onRefresh;
-  bool get _starting => startingLevelId != null;
 
   @override
   Widget build(BuildContext context) {
@@ -217,6 +249,9 @@ class _ContenidoProgreso extends StatelessWidget {
                   progreso.desbloqueada ? Icons.lock_open : Icons.lock,
                 ),
                 title: Text(_nombreDificultad(progreso.dificultad)),
+                onTap: progreso.desbloqueada
+                    ? () => onOpenDifficulty(progreso.dificultad)
+                    : null,
                 subtitle: Text(
                   progreso.desbloqueada
                       ? progreso.total == 0
@@ -236,127 +271,84 @@ class _ContenidoProgreso extends StatelessWidget {
               ),
             ),
           const SizedBox(height: 12),
-          Text(
-            'Orden personal: ${_nombreDificultad(estado.dificultadActiva)}',
-            style: Theme.of(context).textTheme.titleLarge,
-          ),
-          if (estado.niveles.isEmpty)
-            const Padding(
-              padding: EdgeInsets.symmetric(vertical: 24),
-              child: Text(
-                'Todavía no hay niveles publicados para esta dificultad. '
-                'Se requieren cinco niveles publicados para completarla.',
-                textAlign: TextAlign.center,
-              ),
-            ),
-          for (final entry in estado.niveles.asMap().entries)
-            Card(
-              child: ListTile(
-                title: Text('Nivel ${entry.key + 1}'),
-                subtitle: Text(
-                  entry.value.completado
-                      ? 'Completado'
-                      : 'Canción por descubrir',
-                ),
-                trailing: entry.value.completado
-                    ? FilledButton.tonal(
-                        onPressed: _starting
-                            ? null
-                            : () => onStart(
-                                entry.value.nivel,
-                                numeroVisible: entry.key + 1,
-                              ),
-                        child: startingLevelId == entry.value.nivel.id
-                            ? const SizedBox(
-                                width: 18,
-                                height: 18,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                ),
-                              )
-                            : const Text('Repetir'),
-                      )
-                    : entry.value.puedeIniciar
-                    ? FilledButton(
-                        onPressed: startingLevelId == null
-                            ? () => onStart(
-                                entry.value.nivel,
-                                numeroVisible: entry.key + 1,
-                              )
-                            : null,
-                        child: startingLevelId == entry.value.nivel.id
-                            ? const SizedBox(
-                                width: 18,
-                                height: 18,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                ),
-                              )
-                            : const Text('Jugar'),
-                      )
-                    : const Icon(Icons.lock_outline),
-              ),
-            ),
-          if (estado.niveles.isNotEmpty &&
-              estado.niveles.every((nivel) => nivel.completado))
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: Text(
-                estado.dificultades
-                            .firstWhere(
-                              (progreso) =>
-                                  progreso.dificultad ==
-                                  estado.dificultadActiva,
-                            )
-                            .total <
-                        5
-                    ? 'Completaste los niveles publicados. Se necesitan 5 niveles publicados para completar esta dificultad.'
-                    : estado.dificultadActiva == Dificultad.avanzado
-                    ? '¡Completaste los cinco niveles de esta dificultad!'
-                    : '¡Completaste los cinco niveles! Se desbloqueará la siguiente dificultad.',
-                textAlign: TextAlign.center,
-              ),
-            ),
-          if (estado.nivelesRepetibles.isNotEmpty) ...[
-            const SizedBox(height: 16),
-            Text(
-              'Repetir niveles completados',
-              style: Theme.of(context).textTheme.titleLarge,
-            ),
-            for (final asignado in estado.nivelesRepetibles)
-              Card(
-                child: ListTile(
-                  title: Text(
-                    'Nivel ${asignado.nivel.numero} · ${_nombreDificultad(asignado.nivel.dificultad)}',
-                  ),
-                  subtitle: const Text('Completado'),
-                  trailing: FilledButton.tonal(
-                    onPressed: _starting ? null : () => onStart(asignado.nivel),
-                    child: startingLevelId == asignado.nivel.id
-                        ? const SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Text('Repetir'),
-                  ),
-                ),
-              ),
-          ],
         ],
       ),
     );
   }
+}
 
-  static String _nombreDificultad(Dificultad dificultad) {
-    switch (dificultad) {
-      case Dificultad.facil:
-        return 'Fácil';
-      case Dificultad.medio:
-        return 'Media';
-      case Dificultad.avanzado:
-        return 'Avanzada';
-    }
+class _DifficultyLevelsScreen extends StatelessWidget {
+  const _DifficultyLevelsScreen({
+    required this.dificultad,
+    required this.progreso,
+    required this.niveles,
+    required this.onStart,
+  });
+
+  final Dificultad dificultad;
+  final ProgresoDificultadRemoto progreso;
+  final List<NivelAsignado> niveles;
+  final Future<void> Function(Nivel nivel, int numeroVisible) onStart;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: Text(_nombreDificultad(dificultad))),
+      body: niveles.isEmpty
+          ? Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Text(
+                  progreso.total == 0
+                      ? 'Todavía no hay niveles disponibles para esta dificultad.'
+                      : 'No hay niveles completados para repetir.',
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            )
+          : ListView.builder(
+              padding: const EdgeInsets.all(16),
+              itemCount: niveles.length,
+              itemBuilder: (context, index) {
+                final asignado = niveles[index];
+                final canStart = asignado.completado || asignado.puedeIniciar;
+                return Card(
+                  child: ListTile(
+                    title: Text('Nivel ${index + 1}'),
+                    subtitle: Text(
+                      asignado.completado
+                          ? 'Completado'
+                          : 'Canción por descubrir',
+                    ),
+                    trailing: asignado.completado
+                        ? FilledButton.tonal(
+                            onPressed: canStart
+                                ? () => onStart(asignado.nivel, index + 1)
+                                : null,
+                            child: const Text('Repetir'),
+                          )
+                        : canStart
+                        ? FilledButton(
+                            onPressed: () => onStart(asignado.nivel, index + 1),
+                            child: const Text('Jugar'),
+                          )
+                        : const Icon(Icons.lock_outline),
+                  ),
+                );
+              },
+            ),
+    );
+  }
+}
+
+String _nombreDificultad(Dificultad dificultad) {
+  switch (dificultad) {
+    case Dificultad.facil:
+      return 'Fácil';
+    case Dificultad.medio:
+      return 'Media';
+    case Dificultad.avanzado:
+      return 'Avanzada';
   }
 }
 
