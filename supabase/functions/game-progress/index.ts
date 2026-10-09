@@ -6,6 +6,7 @@ import {
   selectNextInstrumentPrice,
 } from "./pricing.ts";
 import {
+  canonicalDifficulty,
   levelsPerDifficulty,
   selectDifficultyLevels,
 } from "./level_selection.ts";
@@ -90,7 +91,7 @@ function fromFields(fields: Record<string, unknown>): JsonObject {
 }
 
 function normalizeDifficulty(value: unknown): string | undefined {
-  return typeof value === "string" ? value.trim() : undefined;
+  return typeof value === "string" ? canonicalDifficulty(value) : undefined;
 }
 
 function toValue(value: unknown): JsonObject {

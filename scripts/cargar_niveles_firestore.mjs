@@ -111,7 +111,7 @@ function normalizeAnswer(answer) {
 }
 
 function createStemPaths(level) {
-  const folder = `${level.songId}/nivel-${String(level.numero).padStart(2, "0")}`;
+  const folder = level.songId;
   return Object.fromEntries(
     instruments.map((instrument) => [
       instrument,

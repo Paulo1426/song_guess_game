@@ -94,10 +94,10 @@ El README identifica varios servicios clave:
 La app no separa canciones en tiempo real. Los stems deben prepararse previamente en una herramienta administrativa y luego subirse a Supabase Storage.
 
 Se espera una estructura similar a:
-- `cancion-id/nivel-01/bateria.mp3`
-- `cancion-id/nivel-01/acordeon.mp3`
-- `cancion-id/nivel-01/bajo.mp3`
-- `cancion-id/nivel-01/guitarra.mp3`
+- `cancion-id/bateria.mp3`
+- `cancion-id/acordeon.mp3`
+- `cancion-id/bajo.mp3`
+- `cancion-id/guitarra.mp3`
 
 Reglas relevantes del README:
 - Cada stem debe arrancar al mismo instante

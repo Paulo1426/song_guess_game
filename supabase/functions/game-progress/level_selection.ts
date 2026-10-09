@@ -7,13 +7,24 @@ export interface PublishedLevel {
   published: boolean;
 }
 
+export function canonicalDifficulty(value: string): string {
+  const normalized = value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLocaleLowerCase();
+  if (normalized === "media") return "medio";
+  if (normalized === "dificil") return "avanzado";
+  return normalized;
+}
+
 export function selectDifficultyLevels(
   levels: PublishedLevel[],
   difficulty: string,
 ): PublishedLevel[] {
   return levels
     .filter((level) =>
-      level.dificultad.trim() === difficulty &&
+      canonicalDifficulty(level.dificultad) === canonicalDifficulty(difficulty) &&
       level.published &&
       Number.isInteger(level.numero)
     )

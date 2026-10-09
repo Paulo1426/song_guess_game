@@ -115,6 +115,9 @@ estable para que el progreso no cambie entre sesiones. La coleccion debe
 generarse en el servidor, no aceptarse como una lista elegida por el cliente.
 La app no debe leer esta subcoleccion directamente; la Edge Function devuelve
 solo los niveles de la dificultad actualmente habilitada.
+El backend normaliza los valores históricos `media` y `dificil` de
+`levels/{levelId}.dificultad` a `medio` y `avanzado`; los nombres canónicos para
+nuevos documentos son `facil`, `medio` y `avanzado`.
 
 La progresion entre dificultades es secuencial: se empieza en `facil`, y solo
 cuando se hayan completado todos los niveles asignados en esa dificultad se
@@ -228,16 +231,17 @@ actualiza estos documentos:
 ```text
 instrumentos:
   acordeon:
-    storagePath: "cancion-001/nivel-01/fragmento-00/acordeon.mp3"
+    storagePath: "cancion-001/acordeon.mp3"
   bajo:
-    storagePath: "cancion-001/nivel-01/fragmento-00/bajo.mp3"
+    storagePath: "cancion-001/bajo.mp3"
   bateria:
-    storagePath: "cancion-001/nivel-01/fragmento-00/bateria.mp3"
+    storagePath: "cancion-001/bateria.mp3"
 ```
 
 - `levels/facil-01/fragments/fragmento-00`: `inicioSegundos: 0`,
   `duracionSegundos: 20` y `audioPaths` con las mismas tres claves y rutas
-  anteriores. Los archivos deben estar en el bucket privado `instrumentos`.
+  anteriores. Los stems del bucket privado `instrumentos` se guardan
+  directamente bajo la carpeta de la canción.
 - `privateLevelAnswers/facil-01`:
   `respuestaCancionNormalizada: "por supuesto que no"`.
 
@@ -255,31 +259,31 @@ mezclas. En cada `levels/{levelId}`, configura `numero` de 1 a 5,
 `dificultad: "facil"`, el `cancionId` correspondiente, `published: true`,
 `modoPrueba: false`, `duracionFragmentoSegundos: 30`, `puntosInicio: [0]` y
 los cuatro instrumentos. Ejemplo para un nivel con la estructura de Storage
-`instrumentos/cancion-001/nivel-01/`:
+`instrumentos/cancion-001/`:
 
 ```text
 instrumentos:
   acordeon:
-    storagePath: "cancion-001/nivel-01/acordeon.mp3"
+    storagePath: "cancion-001/acordeon.mp3"
   bajo:
-    storagePath: "cancion-001/nivel-01/bajo.mp3"
+    storagePath: "cancion-001/bajo.mp3"
   bateria:
-    storagePath: "cancion-001/nivel-01/bateria.mp3"
+    storagePath: "cancion-001/bateria.mp3"
   guitarra:
-    storagePath: "cancion-001/nivel-01/guitarra.mp3"
+    storagePath: "cancion-001/guitarra.mp3"
 ```
 
 Cada archivo debe contener el mismo fragmento sincronizado de 30 segundos.
-Puedes guardar esos stems directamente dentro de la carpeta `nivel-XX`; con un
-solo fragmento no hace falta una subcarpeta `fragmento-00` ni crear documentos
-en `fragments`. Verifica que el uso de mayúsculas coincida exactamente: por
-ejemplo, `guitarra.MP3` y `guitarra.mp3` son rutas distintas.
+Guarda los cuatro stems directamente dentro de la carpeta de la canción. Para
+compatibilidad, el backend también intenta esa ubicación si el documento tiene
+una ruta antigua bajo `nivel-XX/`. Verifica que el uso de mayúsculas coincida
+exactamente: por ejemplo, `guitarra.MP3` y `guitarra.mp3` son rutas distintas.
 
 Para cargar niveles usa `scripts/cargar_niveles_firestore.mjs` con un JSON de
 cinco niveles. El script acepta `niveles-facil.json`, `niveles-media.json` y
 `niveles-dificil.json`, valida que sus IDs y canciones correspondan a la
 dificultad y genera las rutas de los cuatro stems con el patrón
-`{songId}/nivel-{numero}/`. Completa para cada canción el título, artista,
+`{songId}/{instrumento}.mp3`. Completa para cada canción el título, artista,
 respuesta y las rutas exactas de las dos mezclas. Usa los nombres completos que
 aparecen en Supabase; las rutas distinguen mayúsculas, minúsculas y guiones bajos.
 El script normaliza las respuestas antes de guardarlas.
@@ -289,17 +293,17 @@ La estructura esperada en Supabase es:
 ```text
 canciones-completas/{songId}/{archivo-original}.mp3
 canciones-instrumentales/{songId}/{archivo-instrumental}.mp3
-instrumentos/{songId}/nivel-{numero}/acordeon.mp3
-instrumentos/{songId}/nivel-{numero}/bajo.mp3
-instrumentos/{songId}/nivel-{numero}/bateria.mp3
-instrumentos/{songId}/nivel-{numero}/guitarra.mp3
+instrumentos/{songId}/acordeon.mp3
+instrumentos/{songId}/bajo.mp3
+instrumentos/{songId}/bateria.mp3
+instrumentos/{songId}/guitarra.mp3
 ```
 
-Por ejemplo, para `cancion-004` el nivel Fácil 4 usa la carpeta
-`instrumentos/cancion-004/nivel-04/`. No agregues `fragmento-00`: estos niveles
-usan un único fragmento sincronizado de 30 segundos desde el segundo 0. Verifica
-que las cuatro pistas de cada canción correspondan a la misma canción y al mismo
-fragmento.
+Por ejemplo, el nivel Fácil 4 usa los stems en
+`instrumentos/cancion-004/`. No agregues `fragmento-00` ni `nivel-04`: estos
+niveles usan un único fragmento sincronizado de 30 segundos desde el segundo 0.
+Verifica que las cuatro pistas de cada canción correspondan a la misma canción y
+al mismo fragmento.
 
 El script primero hace una vista previa y no escribe nada. Para autorizar la
 carga, ejecuta con `--apply` y el JSON deseado. Por ejemplo:
@@ -507,10 +511,10 @@ cancionId: "cancion-01"
 published: true
 puntosInicio: [0, 30]
 instrumentos:
-  bateria:  { storagePath: "cancion-01/nivel-01/bateria.mp3" }
-  acordeon:  { storagePath: "cancion-01/nivel-01/acordeon.mp3" }
-  bajo:      { storagePath: "cancion-01/nivel-01/bajo.mp3" }
-  guitarra:  { storagePath: "cancion-01/nivel-01/guitarra.mp3" }
+  bateria:  { storagePath: "cancion-001/bateria.mp3" }
+  acordeon:  { storagePath: "cancion-001/acordeon.mp3" }
+  bajo:      { storagePath: "cancion-001/bajo.mp3" }
+  guitarra:  { storagePath: "cancion-001/guitarra.mp3" }
 ```
 
 En `privateLevelAnswers/facil-01`, crea `respuestaCancionNormalizada` con el
@@ -548,7 +552,7 @@ Buckets recomendados:
   correctamente la canción.
 
 No crees un bucket por cancion. Organiza objetos con rutas como
-`cancion-001/nivel-01/guitarra.mp3` y `cancion-001/track.mp3`. Todos los buckets
+`cancion-001/guitarra.mp3` y `cancion-001/track.mp3`. Todos los buckets
 deben ser **privados**. El bucket existente `instrumentos` aparece como publico
 en el dashboard; vuelve privado su ajuste de acceso cuando estes listo para
 usar el backend. Mientras siga publico, cualquier persona con su URL podra
@@ -570,7 +574,9 @@ En los documentos Firestore usados por esta funcion:
 
 La funcion permite un stem comprado; una vez `melodiaDescubierta` es verdadero,
 permite cualquier stem y la mezcla instrumental completa. La grabacion original
-solo se firma cuando `ganada` es verdadero. Las escrituras de compras,
+solo se firma cuando `ganada` es verdadero. Los stems se guardan en
+`{songId}/{instrument}.mp3`; para documentos antiguos que incluyen `nivel-XX/`,
+la funcion tambien prueba la ruta directa de la cancion. Las escrituras de compras,
 descubrimiento y victoria tienen que proceder de un backend confiable: no
 habilites escrituras del cliente a esos campos. El backend tambien debe asignar
 una sola vez el orden aleatorio de cada dificultad por usuario, conservarlo y

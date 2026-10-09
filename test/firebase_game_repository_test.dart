@@ -3,6 +3,16 @@ import 'package:song_guess_game/models/nivel.dart';
 import 'package:song_guess_game/services/firebase_game_repository.dart';
 
 void main() {
+  test('retains backend status for actionable error messages', () {
+    const error = GameRepositoryException(
+      statusCode: 429,
+      message: 'Espera 30 segundos antes de volver a intentarlo',
+    );
+
+    expect(error.statusCode, 429);
+    expect(error.toString(), contains('30 segundos'));
+  });
+
   test('parses previously completed levels as replayable', () {
     final state = EstadoJuegoRemoto.fromJson({
       'dificultades': [

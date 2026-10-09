@@ -10,6 +10,7 @@ import '../models/nivel.dart';
 import '../models/partida.dart';
 import '../providers/providers.dart';
 import '../services/audio_service.dart';
+import '../services/firebase_game_repository.dart';
 import '../services/offline_game_store.dart';
 
 class GameScreen extends ConsumerStatefulWidget {
@@ -373,7 +374,9 @@ class _GameScreenState extends ConsumerState<GameScreen> {
       }
     } catch (error) {
       if (mounted) {
-        if (widget.offlineLevel != null && !_playingOffline) {
+        if (widget.offlineLevel != null &&
+            !_playingOffline &&
+            error is! GameRepositoryException) {
           debugPrint('No se pudo validar online; comprobando offline: $error');
           setState(() => _playingOffline = true);
           try {
@@ -388,9 +391,13 @@ class _GameScreenState extends ConsumerState<GameScreen> {
           }
         } else {
           setState(() {
-            _message = _playingOffline
-                ? 'No se pudo guardar el progreso offline: $error'
-                : 'No se pudo validar la respuesta: $error';
+            if (error is GameRepositoryException && error.statusCode == 429) {
+              _message = error.message;
+            } else {
+              _message = _playingOffline
+                  ? 'No se pudo guardar el progreso offline: $error'
+                  : 'No se pudo validar la respuesta: $error';
+            }
           });
         }
       }

@@ -5,6 +5,19 @@ import 'package:http/http.dart' as http;
 
 import '../models/nivel.dart';
 
+class GameRepositoryException implements Exception {
+  const GameRepositoryException({
+    required this.statusCode,
+    required this.message,
+  });
+
+  final int statusCode;
+  final String message;
+
+  @override
+  String toString() => message;
+}
+
 class NivelAsignado {
   const NivelAsignado({
     required this.nivel,
@@ -252,8 +265,10 @@ class FirebaseGameRepository {
       throw const FormatException('Respuesta no válida del servicio de juego');
     }
     if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw StateError(
-        decoded['error'] as String? ??
+      throw GameRepositoryException(
+        statusCode: response.statusCode,
+        message:
+            decoded['error'] as String? ??
             'El servicio de juego respondió ${response.statusCode}.',
       );
     }

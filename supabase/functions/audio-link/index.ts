@@ -253,12 +253,19 @@ async function signedStorageUrl(
 
   if (!response.ok) {
     const errorBody = (await response.text()).slice(0, 1000);
+    const missingObject = /not found|object not found/i.test(errorBody);
     console.error("Supabase signed URL request failed", {
       status: response.status,
       bucket,
       objectPath,
       error: errorBody,
     });
+    if (missingObject) {
+      throw new HttpError(
+        404,
+        `No existe ${objectPath} en el bucket ${bucket}`,
+      );
+    }
     throw new HttpError(502, "No se pudo generar el enlace temporal del audio");
   }
 
@@ -394,6 +401,7 @@ async function handleRequest(request: Request): Promise<Response> {
 
     let bucket: string;
     let objectPath: string;
+    let fallbackObjectPath: string | undefined;
     let expiresIn: number;
 
     if (type === "fullSong" || type === "instrumentalSong") {
@@ -505,10 +513,34 @@ async function handleRequest(request: Request): Promise<Response> {
         : undefined;
       objectPath = safeObjectPath(pathFromFragment ?? pathFromLevel);
       bucket = Deno.env.get("SUPABASE_STEMS_BUCKET") ?? "instrumentos";
+      const songId = stringField(level, "cancionId");
+      if (!songId || !validId(songId)) {
+        throw new HttpError(404, "El nivel no tiene una canción válida");
+      }
+      fallbackObjectPath = `${songId}/${instrument}.mp3`;
       expiresIn = 600;
     }
 
-    const url = await signedStorageUrl(bucket, objectPath, expiresIn);
+    let url: string;
+    try {
+      url = await signedStorageUrl(bucket, objectPath, expiresIn);
+    } catch (error) {
+      if (
+        type !== "stem" ||
+        !(error instanceof HttpError) ||
+        error.status !== 404 ||
+        !fallbackObjectPath ||
+        fallbackObjectPath === objectPath
+      ) {
+        throw error;
+      }
+      console.warn("Stem path not found; trying the song-level storage path", {
+        levelId,
+        configuredPath: objectPath,
+        fallbackPath: fallbackObjectPath,
+      });
+      url = await signedStorageUrl(bucket, fallbackObjectPath, expiresIn);
+    }
     return jsonResponse(200, { url, expiresIn });
   } catch (error) {
     if (error instanceof HttpError) {

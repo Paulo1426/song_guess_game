@@ -1,7 +1,39 @@
 import {
+  canonicalDifficulty,
   levelsPerDifficulty,
   selectDifficultyLevels,
 } from "./level_selection.ts";
+
+Deno.test("normalizes the Firestore labels used for medium and hard levels", () => {
+  if (
+    canonicalDifficulty("media") !== "medio" ||
+    canonicalDifficulty("DIFÍCIL") !== "avanzado"
+  ) {
+    throw new Error("Legacy difficulty labels must map to canonical IDs");
+  }
+  const levels = [
+    {
+      id: "media-01",
+      numero: 1,
+      dificultad: "media",
+      published: true,
+    },
+    {
+      id: "dificil-01",
+      numero: 1,
+      dificultad: "difícil",
+      published: true,
+    },
+  ];
+  if (
+    selectDifficultyLevels(levels, "medio").map((level) => level.id).join() !==
+      "media-01" ||
+    selectDifficultyLevels(levels, "avanzado").map((level) => level.id).join() !==
+      "dificil-01"
+  ) {
+    throw new Error("Legacy levels must appear in their canonical difficulties");
+  }
+});
 
 Deno.test("limits every difficulty to its first five numbered published levels", () => {
   const levels = Array.from({ length: 8 }, (_, index) => ({
